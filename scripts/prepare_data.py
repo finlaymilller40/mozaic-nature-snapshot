@@ -32,36 +32,69 @@ SIMPLE_LAYERS = {
     "Ramsar_England": "ramsar",
     "Priority_Habitat_Inventory_England": "priority_habitat",
 }
+PRIORITY_HABITAT_SIMPLIFY_M = 1
 AW_REVISED_PREFIX = "Ancient_Woodland_Inventory_Revised_England"
 AW_ORIGINAL_PREFIX = "Ancient_Woodland_England"
+# Original woods more than this far from any revised wood are treated as
+# outside the revised inventory's coverage (see DECISIONS.md).
+AW_REVISED_COVERAGE_M = 3_000
 EDM_PREFIX = "EDM_"
 
 # The IRZ download has no per-category columns, only a 13-digit code inside
-# the irzurl field. Each digit is kept as its own column (irz_d01..irz_d13).
-IRZ_CODE_LENGTH = 13
-
-# Digit position -> development category, INFERRED from the order of the 13
-# categories in Appendix 3 of data/reference/SSSI IRZ User Guidance v5.4.
-# The guidance does not document the code itself, so treat as unconfirmed.
-IRZ_CATEGORIES_INFERRED = {
-    1: "All Consultations",
-    2: "Infrastructure",
-    3: "Wind & Solar Energy",
-    4: "Minerals, Oil and Gas",
-    5: "Rural Non Residential",
-    6: "Residential",
-    7: "Rural Residential",
-    8: "Air Pollution",
-    9: "Combustion",
-    10: "Waste",
-    11: "Composting",
-    12: "Discharges",
-    13: "Water Supply",
+# the irzurl field. Digit positions map, in order, to the development
+# categories below; see docs/irz_code_mapping.md for how this was verified
+# and what each digit value means. 0 means the category is not triggered.
+IRZ_CATEGORIES = {
+    "irz_all_consultations": "All Consultations",
+    "irz_infrastructure": "Infrastructure",
+    "irz_wind_solar": "Wind & Solar Energy",
+    "irz_minerals_oil_gas": "Minerals, Oil and Gas",
+    "irz_rural_non_residential": "Rural Non Residential",
+    "irz_residential": "Residential",
+    "irz_rural_residential": "Rural Residential",
+    "irz_air_pollution": "Air Pollution",
+    "irz_combustion": "Combustion",
+    "irz_waste": "Waste",
+    "irz_composting": "Composting",
+    "irz_discharges": "Discharges",
+    "irz_water_supply": "Water Supply",
 }
-IRZ_SUMMARY_CATEGORIES = [
-    "All Consultations", "Infrastructure", "Discharges", "Water Supply",
-    "Combustion", "Composting", "Air Pollution", "Rural Non Residential",
+IRZ_CODE_LENGTH = len(IRZ_CATEGORIES)
+IRZ_SUMMARY_COLUMNS = [
+    "irz_all_consultations", "irz_infrastructure", "irz_discharges", "irz_water_supply",
+    "irz_combustion", "irz_composting", "irz_air_pollution", "irz_rural_non_residential",
 ]
+
+# EDM spreadsheet heading (whitespace collapsed) -> short column name.
+# docs/data_dictionary.md lists the same lookup.
+EDM_COLUMNS = {
+    "Unique ID": "unique_id",
+    "Water Company Name": "company",
+    "Site Name (EA Consents Database)": "site_name",
+    "Site Name (WaSC operational) [optional]": "site_name_operational",
+    "EA Permit Reference (EA Consents Database)": "permit_ref",
+    "WaSC Supplementary Permit Ref. [optional]": "permit_ref_supplementary",
+    "Activity Reference on Permit": "activity_ref",
+    "Storm Discharge Asset Type": "asset_type",
+    "Outlet Discharge NGR (EA Consents Database)": "outlet_ngr",
+    "WFD Waterbody ID (Cycle 3) (discharge outlet)": "wfd_waterbody_id",
+    "WFD Waterbody Catchment Name (Cycle 3) (discharge outlet)": "wfd_catchment",
+    "Receiving Water / Environment (common name) (EA Consents Database)": "receiving_water",
+    "Shellfish Water(s) (only populate for storm overflow with a Shellfish Water EDM requirement)": "shellfish_water",
+    "Bathing Water(s) (only populate for storm overflow with a Bathing Water EDM requirement)": "bathing_water",
+    "Treatment Method on Permit (over & above Storm Tank settlement / screening)": "treatment_method",
+    "Total Duration (hh:mm:ss) all spills prior to processing through 12-24h count method": "spill_duration_total",
+    "Counted spills using 12-24h count method": "spill_count",
+    "Long-term average spill count": "spill_count_lt_avg",
+    "Data start - calendar year": "data_start_year",
+    "EDM Operation - % of reporting period EDM operational": "edm_operational_pct",
+    "EDM Operation - Reporting % - Primary Reason <90%": "edm_low_reason",
+    "EDM Operation - Action taken / planned - Status & timeframe": "edm_low_action",
+    "High Spill Frequency - Operational Review - Single year reason": "high_spill_reason_year",
+    "High Spill Frequency - Operational Review - Long-term average reason": "high_spill_reason_lt_avg",
+    "Investigation activity for the reporting period": "investigation",
+    "Improvement activity for the reporting period": "improvement",
+}
 
 # 100 km square letters of the OS National Grid
 NGR_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"  # no I
@@ -112,9 +145,23 @@ def add_irz_code_columns(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     bad = gdf["irzcode"].str.len() != IRZ_CODE_LENGTH
     if bad.any():
         raise ValueError(f"{bad.sum()} IRZ rows lack a {IRZ_CODE_LENGTH}-digit irzcode")
-    for i in range(IRZ_CODE_LENGTH):
-        gdf[f"irz_d{i + 1:02d}"] = gdf["irzcode"].str[i]
+    for i, col in enumerate(IRZ_CATEGORIES):
+        gdf[col] = gdf["irzcode"].str[i].astype(int)
     return gdf
+
+
+def slim_priority_habitat(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Keep the columns we use and simplify shapes to cut the file size.
+
+    The download has no confidence column, so none is kept. area_ha is
+    recomputed because the source areaha describes the unclipped polygon.
+    """
+    gdf = gdf[["uid", "mainhabs", "addhabs", "geometry"]].copy()
+    simplified = gdf.geometry.simplify(PRIORITY_HABITAT_SIMPLIFY_M, preserve_topology=True)
+    gdf = gdf.set_geometry(make_valid(simplified.values, method="structure", keep_collapsed=False))
+    gdf = gdf[~gdf.geometry.is_empty]
+    gdf["area_ha"] = gdf.geometry.area / 10_000
+    return gdf.reset_index(drop=True)
 
 
 def prepare_simple(aoi: gpd.GeoDataFrame) -> None:
@@ -122,11 +169,20 @@ def prepare_simple(aoi: gpd.GeoDataFrame) -> None:
         gdf = to_bng_clipped(read_in_aoi(find_raw(prefix), aoi), aoi)
         if name == "irz":
             gdf = add_irz_code_columns(gdf)
+        elif name == "priority_habitat":
+            gdf = slim_priority_habitat(gdf)
         save(gdf, name)
 
 
 def prepare_ancient_woodland(aoi: gpd.GeoDataFrame) -> None:
-    """Revised polygons where they exist, the original inventory elsewhere."""
+    """Revised inventory within its coverage, the original inventory outside it.
+
+    The revised inventory only covers part of the AOI (not the north-east
+    corner or part of the western edge) and has no coverage boundary, so
+    coverage is taken as land within AW_REVISED_COVERAGE_M of a revised wood.
+    Inside it, only revised polygons are used, so original woods the revision
+    dropped stay dropped.
+    """
     revised = to_bng_clipped(read_in_aoi(find_raw(AW_REVISED_PREFIX), aoi), aoi)
     original = to_bng_clipped(read_in_aoi(find_raw(AW_ORIGINAL_PREFIX), aoi), aoi)
 
@@ -134,12 +190,8 @@ def prepare_ancient_woodland(aoi: gpd.GeoDataFrame) -> None:
     original.columns = [c.lower() if c != "geometry" else c for c in original.columns]
     original = original.rename(columns={"themname": "themename", "themid": "themeid"})
 
-    # Remove the revised footprint from the original polygons (overlay uses a
-    # spatial index, so only overlapping pairs are compared), then drop the
-    # thin slivers left where the two inventories trace the same edge.
-    original = gpd.overlay(original, revised[["geometry"]], how="difference", keep_geom_type=True)
-    original = original.explode(index_parts=False)
-    original = original[original.geometry.area >= 100].dissolve(by="globalid", as_index=False)
+    coverage = revised.buffer(AW_REVISED_COVERAGE_M).union_all()
+    original = original[~original.geometry.centroid.within(coverage)].copy()
 
     revised["source"] = "revised"
     original["source"] = "original"
@@ -187,9 +239,13 @@ def prepare_storm_overflows(aoi: gpd.GeoDataFrame) -> None:
 
     df = df.dropna(axis="columns", how="all")
     df.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in df.columns]
-    df = df[df["Water Company Name"].str.strip() == "Anglian Water"].copy()
+    unknown = set(df.columns) - set(EDM_COLUMNS)
+    if unknown:
+        raise KeyError(f"EDM columns with no short name in EDM_COLUMNS: {sorted(unknown)}")
+    df = df.rename(columns=EDM_COLUMNS)
+    df = df[df["company"].str.strip() == "Anglian Water"].copy()
 
-    ngr_col = "Outlet Discharge NGR (EA Consents Database)"
+    ngr_col = "outlet_ngr"
     has_ngr = df[ngr_col].notna() & (df[ngr_col].astype(str).str.strip() != "")
     if (~has_ngr).any():
         print(f"storm_overflows: dropping {(~has_ngr).sum()} rows with no grid reference")
@@ -218,13 +274,11 @@ def print_summary() -> None:
         print("columns:", ", ".join(gdf.columns))
 
     irz = gpd.read_file(CLEAN_DIR / "irz.gpkg")
-    print("\n== irz.gpkg categories (digit-to-category mapping inferred, not confirmed)")
-    position = {name: pos for pos, name in IRZ_CATEGORIES_INFERRED.items()}
-    for category in IRZ_SUMMARY_CATEGORIES:
-        col = f"irz_d{position[category]:02d}"
+    print("\n== irz.gpkg categories (digit value; 0 = not triggered)")
+    for col in IRZ_SUMMARY_COLUMNS:
         counts = irz[col].value_counts()
         top = ", ".join(f"{v}: {n}" for v, n in counts.head(10).items())
-        print(f"{category} ({col}): {irz[col].nunique()} unique | {top}")
+        print(f"{IRZ_CATEGORIES[col]} ({col}): {irz[col].nunique()} unique | {top}")
 
 
 def main() -> None:
