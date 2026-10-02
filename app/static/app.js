@@ -99,6 +99,12 @@ async function askNext() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(history),
     });
+    if (response.status === 429) {
+      const detail = (await response.json().catch(() => ({}))).detail;
+      $("status").textContent = "";
+      showFallback(detail || "This session has reached its chat limit. Please use the form to finish.");
+      return;
+    }
     if (!response.ok) throw new Error(`The assistant returned an error (${response.status}).`);
     const turn = await response.json();
     $("status").textContent = "";

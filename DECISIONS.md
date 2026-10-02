@@ -195,3 +195,28 @@ still works.
 **Why:** One page with no build step is quick to change and easy to host
 alongside the API. The work type list for the form comes from
 `app/rules.yaml` via the page itself, so the API stays at three endpoints.
+
+## 2026-10-02: Intake AI switched to Claude Sonnet 5.5, with a message cap
+
+**Decision:** The intake chat uses the Anthropic API with
+`claude-sonnet-5-5` by default (`LLM_PROVIDER=claude`). Gemini remains
+available by setting `LLM_PROVIDER=gemini`. The key is read on the server
+from `ANTHROPIC_API_KEY` in `.env` and never reaches the browser.
+
+The answers come back through Anthropic tool calling: one strict tool,
+`submit_intake_turn`, whose input schema is the intake schema built from
+`app/rules.yaml`, so enum fields can only hold allowed values. Sonnet 5.5
+doesn't accept a forced `tool_choice`, so the request uses `auto`, tells the
+model to call the tool, and retries once if it answers in text instead.
+Effort is `low` because the turns are short, and server-side fallback is on
+in case the model declines.
+
+Each browser session may send at most 20 chat messages
+(`INTAKE_MESSAGE_CAP`), tracked by a random cookie. Past the cap, `/intake`
+returns 429 and the page switches to the five-question form.
+
+**Why:** Gemini's free tier was repeatedly overloaded and then hit its
+20-requests-a-day quota, which stopped the chat. The cap limits what one
+visitor can spend on the API. Counts are kept in memory, so they reset when
+the server restarts; that's acceptable for a demo but would need shared
+storage if the app ran on several servers.

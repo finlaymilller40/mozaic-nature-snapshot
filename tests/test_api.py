@@ -66,6 +66,7 @@ def test_intake_reports_llm_outage_as_503(client, monkeypatch):
     monkeypatch.setattr(main, "next_turn", failing)
     response = client.post("/intake", json=[{"role": "user", "content": "Hi"}])
     assert response.status_code == 503
+    assert main.SESSION_COOKIE in response.cookies  # errors still keep the session
 
 
 def test_intake_rejects_bad_history(client):
@@ -163,3 +164,32 @@ def test_index_page_has_work_types_from_rules(client):
 def test_static_files_are_served(client):
     for path in ("/static/app.js", "/static/style.css"):
         assert client.get(path).status_code == 200
+
+
+# ------------------------------------------------------- session message cap
+
+
+def test_intake_message_cap_per_session(client, monkeypatch):
+    monkeypatch.setattr(main, "INTAKE_MESSAGE_CAP", 2)
+    monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
+    monkeypatch.setattr(main, "next_turn", lambda history: {"type": "question", "text": "Next?"})
+    history = [{"role": "user", "content": "Upgrading storm overflows"}]
+
+    with TestClient(main.app) as browser:  # its own cookie jar = one session
+        assert browser.post("/intake", json=history).status_code == 200
+        assert main.SESSION_COOKIE in browser.cookies
+        assert browser.post("/intake", json=history).status_code == 200
+        capped = browser.post("/intake", json=history)
+        assert capped.status_code == 429 and "limit of 2" in capped.json()["detail"]
+
+    with TestClient(main.app) as other_browser:  # a new session starts fresh
+        assert other_browser.post("/intake", json=history).status_code == 200
+
+
+def test_intake_rejects_history_longer_than_cap(client, monkeypatch):
+    monkeypatch.setattr(main, "INTAKE_MESSAGE_CAP", 2)
+    monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
+    monkeypatch.setattr(main, "next_turn", lambda history: {"type": "question", "text": "Next?"})
+    long_history = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}] * 3
+    with TestClient(main.app) as browser:
+        assert browser.post("/intake", json=long_history[:-1]).status_code == 429

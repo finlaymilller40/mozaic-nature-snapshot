@@ -9,12 +9,16 @@ Run locally with:  .venv/bin/uvicorn app.main:app --reload
 """
 
 import json
+import os
+import secrets
+import threading
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
 import geopandas as gpd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -30,6 +34,14 @@ POINT_BUFFER_M = 50
 AOI_ZIP = ROOT / "data" / "aoi" / "cambs_aoi.zip"
 NOT_SCREENED = "not_screened"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Each browser session may send at most this many chat messages to the AI.
+# Sessions are identified by a random cookie; counts are kept in memory, so
+# they reset when the server restarts.
+INTAKE_MESSAGE_CAP = int(os.environ.get("INTAKE_MESSAGE_CAP", "20"))
+SESSION_COOKIE = "snapshot_session"
+_session_counts: defaultdict[str, int] = defaultdict(int)
+_session_lock = threading.Lock()
 
 state: dict[str, Any] = {}
 
@@ -72,13 +84,30 @@ def index() -> str:
 
 
 @app.post("/intake")
-def intake(history: list[ChatMessage]) -> dict:
+def intake(history: list[ChatMessage], request: Request, response: Response) -> dict:
     if not history or history[0].role != "user":
         raise HTTPException(422, "history must start with the user's description of the work")
+
+    session = request.cookies.get(SESSION_COOKIE) or secrets.token_urlsafe(16)
+    response.set_cookie(SESSION_COOKIE, session, httponly=True, samesite="lax")
+    # Error responses don't include cookies set on `response`, so pass it on.
+    cookie = {"set-cookie": response.headers["set-cookie"]}
+    user_messages = sum(m.role == "user" for m in history)
+    with _session_lock:
+        over_cap = _session_counts[session] >= INTAKE_MESSAGE_CAP or user_messages > INTAKE_MESSAGE_CAP
+        if not over_cap:
+            _session_counts[session] += 1
+    if over_cap:
+        raise HTTPException(
+            429,
+            f"This session has reached its limit of {INTAKE_MESSAGE_CAP} chat messages. "
+            "Please use the form to finish.",
+            headers=cookie,
+        )
     try:
         return next_turn([m.model_dump() for m in history])
     except LLMError as exc:
-        raise HTTPException(503, f"Intake assistant unavailable: {exc}") from None
+        raise HTTPException(503, f"Intake assistant unavailable: {exc}", headers=cookie) from None
 
 
 @app.post("/snapshot")

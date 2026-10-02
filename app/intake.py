@@ -14,7 +14,7 @@ import re
 from functools import lru_cache
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app import llm
 from app.scoring import load_rules, validate_intake
@@ -45,7 +45,12 @@ def intake_schema() -> type[BaseModel]:
         "next_question": (Optional[str], Field(description="The one question to ask next, or null when all answers are known")),
         "summary": (Optional[str], Field(description="Plain-English summary for the user to confirm, only when all answers are known")),
     }
-    return create_model("IntakeTurn", **fields)
+    return create_model(
+        "IntakeTurn",
+        __config__=ConfigDict(extra="forbid"),  # additionalProperties: false, needed for strict tools
+        __doc__="Record the intake answers known so far, plus the next question or the summary to confirm.",
+        **fields,
+    )
 
 
 @lru_cache(maxsize=None)
