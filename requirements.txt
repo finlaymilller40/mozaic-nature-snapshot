@@ -1,0 +1,10 @@
+certifi==2026.7.22
+geopandas==1.2.0
+numpy==2.4.6
+packaging==26.3
+pandas==3.0.6
+pyogrio==0.13.0
+pyproj==3.7.2
+python-dateutil==2.9.0.post0
+shapely==2.1.2
+six==1.17.0
