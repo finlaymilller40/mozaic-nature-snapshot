@@ -1,12 +1,17 @@
 certifi==2026.7.22
 et_xmlfile==2.0.0
 geopandas==1.2.0
+iniconfig==2.3.0
 numpy==2.4.6
 openpyxl==3.1.5
 packaging==26.3
 pandas==3.0.6
+pluggy==1.6.0
+Pygments==2.21.0
 pyogrio==0.13.0
 pyproj==3.7.2
+pytest==9.1.1
 python-dateutil==2.9.0.post0
+PyYAML==6.0.3
 shapely==2.1.2
 six==1.17.0

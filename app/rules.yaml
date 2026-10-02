@@ -1,0 +1,151 @@
+# Assurance rules for scoring a site. Read by app/scoring.py.
+#
+# Source: DECISIONS.md ("Assurance decision tree" and "Work type -> IRZ
+# triggers"). Edit levels, escalations, distances and trigger values here;
+# each rule's `check` names the test in scoring.py that applies it.
+#
+# IRZ category columns and value meanings: docs/irz_code_mapping.md.
+
+levels: [A1, A2, A3, A4]   # lowest to highest; the highest level found wins
+
+# Every intake answer must be yes or no; "unknown" is not accepted (rule 9).
+intake_fields:
+  - beyond_site
+  - abstraction
+  - dewatering
+  - physical_survey_required
+
+rules:
+  - id: 1
+    name: European site
+    description: Inside SAC / SPA / Ramsar
+    check: overlaps_european_site
+    level: A3
+    may_escalate_to: A4
+
+  - id: 2
+    name: SSSI
+    description: Inside SSSI
+    check: overlaps_sssi
+    level: A3
+    may_escalate_to: A4
+
+  - id: 3
+    name: Ancient woodland
+    description: Within 15 m of ancient woodland
+    check: near_ancient_woodland
+    buffer_m: 15
+    source: Natural England & Forestry Commission standing advice
+    level: A3
+    may_escalate_to: A4
+
+  - id: 4
+    name: IRZ All Consultations
+    description: IRZ All Consultations = 1 or 2
+    check: irz_all_consultations
+    values: [1, 2]
+    level: A3
+    may_escalate_to: A4
+
+  - id: 5
+    name: Abstraction or dewatering
+    description: Abstraction or dewatering = yes, plus any IRZ trigger
+    check: abstraction_or_dewatering_with_irz_trigger
+    level: A3
+    may_escalate_to: null
+    note: Groundwater specialist may be needed
+
+  - id: 6
+    name: IRZ work-type trigger
+    description: IRZ trigger for the work type
+    check: irz_work_type_trigger
+    level: A2
+    may_escalate_to: A3
+
+  - id: 7
+    name: Priority habitat
+    description: Overlaps priority habitat
+    check: overlaps_priority_habitat
+    level: A2
+    may_escalate_to: A3
+
+  - id: 8
+    name: Nothing found
+    description: Nothing found
+    check: nothing_found
+    level: A1
+    may_escalate_to: null
+    note: Confirm remotely
+
+  - id: 9
+    name: Complete intake
+    description: Intake must collect yes/no for every question; no 'unknown' answers
+    check: intake_complete
+
+  - id: 10
+    name: Physical survey
+    description: Physical survey required -> any A3 becomes A4
+    check: physical_survey_upgrade
+    from_level: A3
+    to_level: A4
+
+# Not used to set the level, only reported alongside it.
+context_only:
+  - SSSI condition (nearest SSSI unit)
+  - European-site linkage (a triggered IRZ zone overlaps a SAC / SPA / Ramsar)
+  - Direction of effect (not available from the data; for the assessor)
+
+# Work type -> IRZ values that count as a trigger (rule 6). Values assume
+# typical water company scale. A trigger with min_site_area_ha only applies
+# when the site is at least that big.
+work_types:
+  new_pipeline_sewer:
+    label: New pipeline / sewer
+    triggers:
+      - {category: irz_infrastructure, values: [1]}
+
+  pipe_upgrade_refurbishment:
+    label: Pipe upgrade / refurbishment
+    note: Upgrades and refurbishment of the existing network don't trigger Infrastructure, per the IRZ guidance.
+    triggers: []
+
+  storm_overflow:
+    label: Storm overflow / outfall / works discharge
+    triggers:
+      - {category: irz_discharges, values: [2, 3, 4, 5]}
+
+  treatment_works_chp:
+    label: Treatment works with combined heat and power
+    triggers:
+      - {category: irz_combustion, values: [1]}
+
+  sludge_anaerobic_digestion:
+    label: Sludge / anaerobic digestion
+    note: AD treated as an industrial process that emits ammonia (cautious reading).
+    triggers:
+      - {category: irz_composting, values: [1, 2]}
+      - {category: irz_air_pollution, values: [1, 2, 3, 4]}
+
+  storm_tank_larger_works:
+    label: Storm tank / larger works
+    triggers:
+      - {category: irz_rural_non_residential, values: [2]}
+      - {category: irz_rural_non_residential, values: [3], min_site_area_ha: 1}
+
+  new_increased_abstraction:
+    label: New or increased abstraction
+    note: Approximation.
+    triggers:
+      - {category: irz_water_supply, values: [1]}
+
+# Intake answers that add IRZ triggers on top of the work type (rule 6).
+intake_triggers:
+  beyond_site:
+    label: Works beyond existing site boundary
+    triggers:
+      - {category: irz_all_consultations, values: [1, 2, 3, 4]}
+  abstraction:
+    label: New or increased abstraction
+    note: Approximation.
+    triggers:
+      - {category: irz_water_supply, values: [1]}
