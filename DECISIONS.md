@@ -84,3 +84,22 @@ names (for example `spill_count`, `outlet_ngr`). The lookup is
 punctuation, which makes them awkward to use in code and GIS tools. The
 script stops with an error if the spreadsheet gains a column the lookup does
 not cover, so new columns are not silently mislabelled.
+
+## 2026-10-02: Assurance decision tree
+
+1. Inside SAC / SPA / Ramsar → A3 (may → A4)
+2. Inside SSSI → A3 (may → A4)
+3. Within 15 m of ancient woodland → A3 (may → A4). Source: Natural England & Forestry Commission standing advice.
+4. IRZ All Consultations = 1 or 2 → A3 (may → A4)
+5. Abstraction or dewatering = yes, plus any IRZ trigger → A3 (note: groundwater specialist may be needed)
+6. IRZ trigger for the work type → A2 (may → A3)
+7. Overlaps priority habitat → A2 (may → A3)
+8. Nothing found → A1 ('confirm remotely')
+9. Intake must collect yes/no for every question; no 'unknown' answers
+10. Physical survey required → any A3 becomes A4
+
+Highest level wins; all reasons listed. SSSI condition, European-site linkage and direction of effect are context only and never change the level.
+
+**Note for the build:** these rules must live in one config file
+(`app/rules.yaml`), not hard-coded, so they can be changed easily. Nothing
+is built yet; this entry records the decision only.
