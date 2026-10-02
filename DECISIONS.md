@@ -117,10 +117,18 @@ and value meanings are in `docs/irz_code_mapping.md`.
 | New pipeline / sewer | Infrastructure | 1 |
 | Storm overflow / outfall / works discharge | Discharges | 2–5 |
 | Treatment works with combined heat and power | Combustion | 1 |
-| Sludge / anaerobic digestion | Composting; Air Pollution | Composting 1–2; Air Pollution 1–2 |
-| Pumping station / storm tank / larger works | Rural Non-Residential | 2 (and 3 if over 1 ha) |
+| Sludge / anaerobic digestion | Composting; Air Pollution | Composting 1–2; Air Pollution 1–4 |
+| Storm tank / larger works | Rural Non-Residential | 2 (and 3 if over 1 ha) |
 | New or increased abstraction | Water Supply | 1 (⚠️ approximation) |
 
 **Note:** pipe upgrades and refurbishment don't trigger Infrastructure, per
 the IRZ guidance (Infrastructure value 1 excludes "upgrades and
 refurbishment of existing network").
+
+**Revised 2026-10-02:**
+- Pumping stations removed from the Rural Non-Residential row. Most are
+  under its 0.2 ha footprint / 1,000 m² floorspace threshold. Storm tanks
+  and larger works stay.
+- Sludge / anaerobic digestion widened to Air Pollution 1–4, treating AD as
+  an industrial process that emits ammonia (cautious reading; values 3–4
+  cover industrial processes).
