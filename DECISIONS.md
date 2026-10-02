@@ -153,3 +153,24 @@ already given and asks only for what is missing, one question at a time, in
 plain English. Structured output limits the answers to allowed values, and
 the AI never suggests an assurance level; the level comes only from
 `app/scoring.py`.
+
+## 2026-10-02: API endpoints and example portfolio
+
+**Decision:** The API (`app/main.py`, FastAPI) has three endpoints:
+
+- `POST /intake`: takes the chat history and returns the next intake turn
+  (a question, or a summary to confirm).
+- `POST /snapshot`: takes the confirmed intake and the sites as lat/long
+  GeoJSON (points or polygons), and returns each site's level,
+  may_escalate_to, reasons and context, plus a portfolio summary of counts
+  per level. Points are buffered by 50 m.
+- `GET /sites/examples`: returns the example portfolio.
+
+The example portfolio is all 461 Anglian Water storm overflows in the AOI
+(`data/clean/storm_overflows.gpkg`).
+
+**Why:** Three endpoints match the three steps a user takes: describe the
+work, screen the sites, and (for a demo) load a ready-made set of sites.
+The storm overflows are real assets spread across the whole AOI, so they
+exercise every rule. Data layers are loaded once when the app starts, not
+per request.
