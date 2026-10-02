@@ -220,3 +220,108 @@ returns 429 and the page switches to the five-question form.
 visitor can spend on the API. Counts are kept in memory, so they reset when
 the server restarts; that's acceptable for a demo but would need shared
 storage if the app ran on several servers.
+
+## 2026-10-02: How sites are entered
+
+**Decision:** The map starts with no sites, showing only the screened area,
+protected sites (SSSI, SAC, SPA, Ramsar) and Impact Risk Zones. Users add
+the location of their work in three ways:
+
+1. **Postcode in the chat.** The AI asks for a postcode, or for the user to
+   place the site on the map. It only copies postcodes the user typed (the
+   code checks each one appears in the user's messages); it never produces
+   coordinates. Each postcode is looked up and becomes a draggable pin the
+   user must confirm, noted as postcode-level accuracy. A postcode district
+   (such as CB7) only zooms the map. If the location is vague ("near Ely"),
+   the AI asks again or asks the user to place the site on the map.
+2. **Drawing** points, lines (pipelines) or polygons on the map
+   (Leaflet-Geoman).
+3. **Uploading or pasting coordinates**, as CSV or GeoJSON (below).
+
+The page shows the note "Upload coordinates for the most accurate results."
+The chat won't show its summary until at least one site is on the map.
+
+**Coordinate formats:** CSV with a header row and one of `easting,northing`
+(British National Grid), `lat,lon`, or `grid_ref` (e.g. TL2709096270);
+optional `name`, and `route` to join rows into a line in order. GeoJSON with
+points, lines or polygons, in lat/long or British National Grid (detected
+from the values). The coordinate system is taken from the column names or
+values and checked against plausible ranges; any bad row rejects the whole
+upload with row-by-row reasons. British National Grid sites are sent to the
+server unconverted (`crs: EPSG:27700`), so the only conversion is the
+server's. Limits: 2,000 sites and 5 MB per upload.
+
+## 2026-10-02: Geocoding with postcodes.io, postcodes only
+
+**Decision:** `GET /geocode` looks up full UK postcodes and postcode
+districts with postcodes.io (no key needed). Place names are not
+geocoded.
+
+**Why:** Postcodes are precise enough to place a pin the user then
+confirms or moves, and postcodes.io needs no account. Geocoding place names
+well (towns, rivers, roads) needs a gazetteer such as OS Names; that is
+listed under "With more time" in the README.
+
+## 2026-10-02: Pipelines scored in sections
+
+**Decision:** Lines are screened as a corridor 15 m either side of the
+route, cut into 50 m sections along the centreline (a remainder under 25 m
+joins the last section). Each section is scored with the same rules as any
+site. Neighbouring sections with the same level and reasons are merged
+into stretches, which the map colours by level. The pipeline's overall
+level is its highest section, and each reason says where along the route it
+applies (e.g. "0.80–0.95 km"). Settings are in `app/rules.yaml` under
+`site_geometry`.
+
+- Distances along the route always count the whole route, including parts
+  outside the screened area.
+- Area-based rules (Rural Non-Residential 3, over 1 ha) use the whole
+  route's footprint, so cutting it into sections doesn't switch them off.
+- A section can be A4: rule 10 applies to each section.
+- One screening can include up to 1,200 sections (about 60 km of route).
+  A 50 km route (1,000 sections) screens in about 1.6 seconds.
+
+**Why:** A single level for a long route hides where the problems are.
+50 m sections are fine-grained enough to show which stretch crosses a
+designated site, and merging matching neighbours keeps the result readable.
+
+## 2026-10-02: Sites partly outside the screened area
+
+**Decision:** The part of a site inside the screened area (the AOI) is
+screened; the part outside is shown grey and dashed, with a warning saying
+how much wasn't checked, e.g. "3.0 km of this route is outside the screened
+area and has not been checked" or "200.0 ha of this site is outside…". This
+applies to lines, polygons and the 50 m area around points. A point within
+1 m of the area counts as inside, to allow for rounding when converting
+coordinates. Sites wholly outside are "not screened".
+
+**Why:** Screening the inside part gives a useful answer for most of the
+site, and the warning makes clear what wasn't checked. (This replaces the
+earlier rule that sites not wholly inside were not screened at all.)
+
+## 2026-10-02: Storm overflows only for storm overflow work
+
+**Decision:** The 461 example storm overflows appear on the map only when
+the work type is storm overflow. Clicking one adds it to the sites, and a
+"Use all 461 storm overflows" button adds them all. Changing to another
+work type hides them and removes them from the site list.
+
+## 2026-10-02: API grows to five endpoints
+
+**Decision:** The API now has `POST /intake`, `POST /snapshot`,
+`GET /geocode`, `GET /layers/{name}` and `GET /sites/examples`. This
+replaces the three-endpoint decision above. Other changes:
+
+- `/intake` takes `{history, sites_placed}` and returns the answers known
+  so far, plus any postcodes or districts to look up.
+- `/snapshot` accepts lines, and a `crs` for the request or per feature
+  (`EPSG:4326` or `EPSG:27700`).
+- `/layers/protected` and `/layers/irz` serve the background map layers,
+  simplified for display and compressed. The risk-zone layer covers the
+  whole area, so the map shows only zones that matter: those asking to be
+  consulted on all applications, plus, once the work type is known, those
+  that trigger for it.
+
+**Why:** Geocoding and the background layers are separate jobs with their
+own caching, and keeping them out of `/snapshot` keeps that endpoint about
+screening.

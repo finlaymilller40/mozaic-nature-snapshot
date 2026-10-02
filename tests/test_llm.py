@@ -10,7 +10,8 @@ from app.intake import intake_schema
 
 ANSWERS = {
     "work_type": "storm_overflow", "beyond_site": None, "abstraction": None, "dewatering": None,
-    "physical_survey_required": None, "next_question": "Is any work outside the site boundary?", "summary": None,
+    "physical_survey_required": None, "postcodes": [], "postcode_districts": [],
+    "next_question": "Is any work outside the site boundary?", "summary": None,
 }
 HISTORY = [{"role": "user", "content": "Upgrading storm overflows"}]
 

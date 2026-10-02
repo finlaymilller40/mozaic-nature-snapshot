@@ -8,6 +8,14 @@
 
 levels: [A1, A2, A3, A4]   # lowest to highest; the highest level found wins
 
+# How submitted sites become the areas that get screened (app/sites.py).
+site_geometry:
+  point_buffer_m: 50        # points are screened as a circle of this radius
+  line_corridor_m: 15       # lines (pipelines) are screened as a corridor this far either side
+  section_length_m: 50      # lines are scored in sections of this length; matching neighbours merge
+  max_sections: 1200        # per request, about 60 km of route
+  max_sites: 2000           # per request
+
 # Every intake answer must be yes or no; "unknown" is not accepted (rule 9).
 intake_fields:
   - beyond_site

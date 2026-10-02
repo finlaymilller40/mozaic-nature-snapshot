@@ -140,3 +140,70 @@ button.link { background: none; color: var(--muted); padding: 6px 0; text-decora
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 60vh; height: auto; }
   .panel { border-right: 0; border-bottom: 1px solid var(--border); padding: 16px; }
 }
+
+/* Sites panel */
+h2 .muted { font-weight: 400; font-size: 0.9rem; }
+.small { font-size: 0.85rem; }
+.note {
+  font-size: 0.85rem;
+  background: #eef6f3;
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  margin: 8px 0;
+}
+#site-list { list-style: none; padding: 0; margin: 8px 0; max-height: 220px; overflow-y: auto; }
+#site-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+#site-list li:last-child { border-bottom: 0; }
+#site-list .site-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#site-list .tag { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+#site-list button { padding: 2px 8px; font-size: 0.8rem; }
+#site-list .pending { color: #9a6700; }
+#upload summary { cursor: pointer; color: var(--accent); margin-top: 6px; }
+#upload textarea {
+  width: 100%;
+  font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  margin: 4px 0 8px;
+}
+code { font-size: 0.85em; background: #eef0f2; padding: 0 3px; border-radius: 3px; }
+.file-button {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  cursor: pointer;
+}
+#upload-status.error, .error-text { color: #b42318; }
+#warnings { list-style: none; padding: 0; margin: 0 0 14px; }
+#warnings li {
+  font-size: 0.85rem;
+  background: #fff4e5;
+  border: 1px solid #f0c27a;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+
+/* Map legend */
+.legend {
+  background: #fff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.legend .swatch { display: inline-block; width: 14px; height: 10px; margin-right: 6px; vertical-align: middle; border: 1px solid; }
+.site-card .where { color: var(--muted); font-size: 0.85rem; margin: 0 0 6px; }
+.site-card .warning { color: #9a6700; font-size: 0.85rem; }

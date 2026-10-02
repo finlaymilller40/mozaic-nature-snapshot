@@ -20,7 +20,8 @@ def fake_llm(monkeypatch, *replies):
 
 def reply(**answers):
     base = dict(work_type=None, beyond_site=None, abstraction=None, dewatering=None,
-                physical_survey_required=None, next_question=None, summary=None)
+                physical_survey_required=None, postcodes=[], postcode_districts=[],
+                next_question=None, summary=None)
     base.update(answers)
     return base
 
@@ -32,21 +33,66 @@ HISTORY = [{"role": "user", "content": "Upgrading storm overflows"}]
 
 def test_asks_question_while_answers_missing(monkeypatch):
     fake_llm(monkeypatch, reply(work_type="storm_overflow", next_question="Is any work outside the site?"))
-    assert intake.next_turn(HISTORY) == {"type": "question", "text": "Is any work outside the site?"}
-
-
-def test_confirms_when_all_answers_known(monkeypatch):
-    fake_llm(monkeypatch, reply(**ALL_KNOWN, summary="Storm overflow work, inside sites. Right?"))
     turn = intake.next_turn(HISTORY)
+    assert turn["type"] == "question" and turn["text"] == "Is any work outside the site?"
+    assert turn["answers"]["work_type"] == "storm_overflow"
+    assert turn["postcodes"] == [] and turn["districts"] == []
+
+
+def test_confirms_when_all_answers_known_and_sites_placed(monkeypatch):
+    fake_llm(monkeypatch, reply(**ALL_KNOWN, summary="Storm overflow work at 3 sites. Right?"))
+    turn = intake.next_turn(HISTORY, sites_placed=3)
     assert turn["type"] == "confirm"
     assert turn["intake"] == ALL_KNOWN
-    assert turn["summary"] == "Storm overflow work, inside sites. Right?"
+    assert turn["summary"] == "Storm overflow work at 3 sites. Right?"
+
+
+def test_never_confirms_without_a_site_on_the_map(monkeypatch):
+    fake_llm(monkeypatch, reply(**ALL_KNOWN, summary="All done. Right?"))
+    turn = intake.next_turn(HISTORY, sites_placed=0)
+    assert turn == {"type": "question", "text": intake.LOCATION_QUESTION, "answers": ALL_KNOWN,
+                    "postcodes": [], "districts": []}
+
+
+def test_passes_on_postcodes_the_user_typed(monkeypatch):
+    history = [{"role": "user", "content": "It's at cb7 4da, the works by the river"}]
+    fake_llm(monkeypatch, reply(postcodes=["CB7 4DA"], next_question="Is any work outside the site?"))
+    turn = intake.next_turn(history)
+    assert turn["postcodes"] == ["CB7 4DA"]
+
+
+def test_drops_postcodes_the_user_never_typed(monkeypatch):
+    # The AI must only copy postcodes, never invent them.
+    history = [{"role": "user", "content": "It's near Ely"}]
+    fake_llm(monkeypatch, reply(postcodes=["CB7 4DA", "not a postcode"], postcode_districts=["CB7"],
+                                next_question="Could you give me a postcode?"))
+    turn = intake.next_turn(history)
+    assert turn["postcodes"] == [] and turn["districts"] == []
+
+
+def test_districts_are_passed_on_for_zooming(monkeypatch):
+    history = [{"role": "user", "content": "Somewhere in CB7"}]
+    fake_llm(monkeypatch, reply(postcode_districts=["cb7"], next_question="Please place the site on the map."))
+    assert intake.next_turn(history)["districts"] == ["CB7"]
+
+
+def test_pin_prompt_when_postcode_given_and_model_asks_nothing(monkeypatch):
+    history = [{"role": "user", "content": "PE1 1AA"}]
+    fake_llm(monkeypatch, reply(**ALL_KNOWN, postcodes=["PE1 1AA"]))
+    turn = intake.next_turn(history, sites_placed=0)
+    assert turn["type"] == "question" and turn["text"] == intake.CONFIRM_PINS
+
+
+def test_site_count_is_given_to_the_model(monkeypatch):
+    calls = fake_llm(monkeypatch, reply(next_question="What type of work is it?"))
+    intake.next_turn(HISTORY, sites_placed=2)
+    assert "the user has 2 site(s) on the map" in calls[0]
 
 
 def test_falls_back_to_fixed_question_if_model_gives_none(monkeypatch):
     fake_llm(monkeypatch, reply(work_type="storm_overflow"))
     turn = intake.next_turn(HISTORY)
-    assert turn == {"type": "question", "text": intake.QUESTIONS["beyond_site"]}
+    assert turn["text"] == intake.QUESTIONS["beyond_site"]
 
 
 def test_level_mention_is_retried_then_replaced(monkeypatch):
@@ -61,8 +107,9 @@ def test_level_mention_is_retried_then_replaced(monkeypatch):
     assert not intake.LEVEL_MENTION.search(turn["text"])
 
 
-def test_schema_rejects_values_outside_rules():
+def test_schema_has_no_coordinate_fields_and_rejects_bad_values():
     schema = intake.intake_schema()
+    assert not {"lat", "lon", "latitude", "longitude", "easting", "northing", "coordinates"} & set(schema.model_fields)
     with pytest.raises(ValidationError):
         schema(**reply(work_type="reservoir"))
     with pytest.raises(ValidationError):

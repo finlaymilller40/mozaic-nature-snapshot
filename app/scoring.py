@@ -61,7 +61,18 @@ def load_layers() -> dict[str, gpd.GeoDataFrame]:
     }
     for gdf in layers.values():
         gdf.sindex  # build spatial indexes once
+    layers["irz"]["european_sites"] = _zone_european_links(layers["irz"], layers["european"])
     return layers
+
+
+def _zone_european_links(irz: gpd.GeoDataFrame, european: gpd.GeoDataFrame) -> list[list[str]]:
+    """For each IRZ zone, the SAC/SPA/Ramsar sites it overlaps (worked out once)."""
+    zone_idx, site_idx = european.sindex.query(irz.geometry.values, predicate="intersects")
+    links: list[set[str]] = [set() for _ in range(len(irz))]
+    for z, s in zip(zone_idx, site_idx):
+        site = european.iloc[s]
+        links[z].add(f"{site.designation}: {site.site} ({site.site_code})")
+    return [sorted(l) for l in links]
 
 
 def _rule(rules: dict, check: str) -> dict:
@@ -89,15 +100,15 @@ def check_site(geometry: BaseGeometry, rules: dict | None = None) -> dict:
     habitat = _hits(layers["priority_habitat"], geometry)
     zones = _hits(layers["irz"], geometry)
 
-    irz_zones = []
-    for _, zone in zones.iterrows():
-        linked = _hits(layers["european"], zone.geometry)
-        irz_zones.append({
+    irz_zones = [
+        {
             "id": zone["id"],
             "irzcode": zone["irzcode"],
             "values": {c: int(zone[c]) for c in irz_columns},
-            "european_sites": _european_labels(linked),
-        })
+            "european_sites": list(zone["european_sites"]),
+        }
+        for _, zone in zones.iterrows()
+    ]
 
     return {
         "site_area_ha": round(geometry.area / 10_000, 4),
@@ -129,11 +140,6 @@ def check_site(geometry: BaseGeometry, rules: dict | None = None) -> dict:
 
 def _text(value) -> str | None:
     return None if value is None or pd.isna(value) or str(value).strip() == "" else str(value)
-
-
-def _european_labels(rows: gpd.GeoDataFrame) -> list[str]:
-    rows = rows.drop_duplicates(["designation", "site_code"])
-    return [f"{r.designation}: {r.site} ({r.site_code})" for r in rows.itertuples()]
 
 
 def _nearest_sssi_unit(units: gpd.GeoDataFrame, geometry: BaseGeometry) -> dict | None:
