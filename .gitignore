@@ -1,0 +1,11 @@
+# Raw data (not committed)
+data/raw/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
