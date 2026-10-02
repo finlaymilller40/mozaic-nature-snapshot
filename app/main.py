@@ -1,5 +1,6 @@
 """HTTP API for the nature exposure snapshot.
 
+GET  /                the single-page frontend (app/static/)
 POST /intake          chat history -> next intake turn
 POST /snapshot        confirmed intake + sites (lat/long GeoJSON) -> levels
 GET  /sites/examples  the example portfolio (Anglian Water storm overflows)
@@ -7,11 +8,15 @@ GET  /sites/examples  the example portfolio (Anglian Water storm overflows)
 Run locally with:  .venv/bin/uvicorn app.main:app --reload
 """
 
+import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Literal
 
 import geopandas as gpd
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from shapely.geometry import mapping, shape
 
@@ -24,6 +29,7 @@ WGS84 = "EPSG:4326"
 POINT_BUFFER_M = 50
 AOI_ZIP = ROOT / "data" / "aoi" / "cambs_aoi.zip"
 NOT_SCREENED = "not_screened"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 state: dict[str, Any] = {}
 
@@ -35,11 +41,13 @@ async def lifespan(app: FastAPI):
     load_layers()
     state["aoi"] = gpd.read_file(f"zip://{AOI_ZIP}").to_crs(BNG).union_all()
     state["examples"] = _example_sites()
+    state["index_html"] = _index_html()
     yield
     state.clear()
 
 
 app = FastAPI(title="Nature Exposure Snapshot", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # ------------------------------------------------------------------ models
@@ -56,6 +64,11 @@ class SnapshotRequest(BaseModel):
 
 
 # --------------------------------------------------------------- endpoints
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index() -> str:
+    return state["index_html"]
 
 
 @app.post("/intake")
@@ -148,6 +161,14 @@ def _read_features(sites: dict) -> list[dict]:
 def _feature_id(feature: dict, index: int) -> str:
     fid = feature.get("id", (feature.get("properties") or {}).get("id"))
     return str(fid) if fid is not None else str(index)
+
+
+def _index_html() -> str:
+    """The page, with the work types from rules.yaml filled in for the fallback form."""
+    work_types = {key: spec["label"] for key, spec in load_rules()["work_types"].items()}
+    # Escape "</" so the JSON can't close its <script> tag.
+    payload = json.dumps(work_types).replace("</", "<\\/")
+    return (STATIC_DIR / "index.html").read_text().replace("{{WORK_TYPES}}", payload)
 
 
 def _example_sites() -> dict:

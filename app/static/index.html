@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nature Exposure Snapshot</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="layout">
+    <section class="panel">
+      <header>
+        <h1>Nature Exposure Snapshot</h1>
+        <p class="muted">Describe the work you're planning. We'll ask a few questions, then screen the example portfolio of 461 Anglian Water storm overflows.</p>
+      </header>
+
+      <div id="chat">
+        <div id="messages" aria-live="polite"></div>
+
+        <div id="confirm-box" class="card" hidden>
+          <p id="summary-text"></p>
+          <div class="buttons">
+            <button id="confirm-btn" type="button">Confirm</button>
+            <button id="edit-btn" type="button" class="secondary">Edit</button>
+          </div>
+        </div>
+
+        <form id="chat-form" autocomplete="off">
+          <input id="chat-input" type="text" placeholder="e.g. We're upgrading 12 storm overflows" aria-label="Message" required>
+          <button type="submit">Send</button>
+        </form>
+        <button id="use-form" type="button" class="link">Use a form instead</button>
+      </div>
+
+      <form id="fallback" class="card" hidden>
+        <p id="fallback-note" class="muted"></p>
+        <label>Type of work
+          <select name="work_type" required><option value="">Choose…</option></select>
+        </label>
+        <label>Any work outside the existing site boundary?
+          <select name="beyond_site" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
+        </label>
+        <label>New or increased water abstraction?
+          <select name="abstraction" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
+        </label>
+        <label>Pumping out groundwater (dewatering)?
+          <select name="dewatering" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
+        </label>
+        <label>Physical site survey needed?
+          <select name="physical_survey_required" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
+        </label>
+        <button type="submit">Screen sites</button>
+      </form>
+
+      <p id="status" class="muted" aria-live="polite"></p>
+
+      <div id="results" hidden>
+        <h2>Results</h2>
+        <ul id="counts"></ul>
+        <a class="button" href="https://mozaic.earth/contact" target="_blank" rel="noopener">Book a call with Mozaic</a>
+        <p class="disclaimer">Indicative screening from public data, not a regulatory decision.</p>
+      </div>
+    </section>
+
+    <section id="map" aria-label="Map of screened sites"></section>
+  </main>
+
+  <script id="work-types" type="application/json">{{WORK_TYPES}}</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

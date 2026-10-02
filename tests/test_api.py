@@ -140,3 +140,26 @@ def test_snapshot_rejects_bad_requests(client, change, message):
     response = client.post("/snapshot", json=body)
     assert response.status_code == 422
     assert message in response.text
+
+
+# --------------------------------------------------------------- frontend
+
+
+def test_index_page_has_work_types_from_rules(client):
+    import json
+    import re
+
+    from app.scoring import load_rules
+
+    response = client.get("/")
+    assert response.status_code == 200 and "text/html" in response.headers["content-type"]
+    blob = re.search(r'<script id="work-types" type="application/json">(.*?)</script>', response.text, re.S)
+    work_types = json.loads(blob.group(1))
+    assert set(work_types) == set(load_rules()["work_types"])
+    assert "Indicative screening from public data, not a regulatory decision." in response.text
+    assert "https://mozaic.earth/contact" in response.text
+
+
+def test_static_files_are_served(client):
+    for path in ("/static/app.js", "/static/style.css"):
+        assert client.get(path).status_code == 200

@@ -174,3 +174,24 @@ work, screen the sites, and (for a demo) load a ready-made set of sites.
 The storm overflows are real assets spread across the whole AOI, so they
 exercise every rule. Data layers are loaded once when the app starts, not
 per request.
+
+## 2026-10-02: Frontend
+
+**Decision:** The frontend is a single page served by FastAPI at `/`, using
+plain HTML, CSS and JavaScript with Leaflet and the Leaflet.markercluster
+plugin loaded from a CDN. No React and no build step.
+
+**How it works:** The left panel runs the intake chat (`POST /intake`). When
+the intake is complete the user sees a summary with Confirm and Edit
+buttons. Confirming loads the example portfolio (`GET /sites/examples`) and
+screens it (`POST /snapshot`). Results show counts per level, a "Book a call
+with Mozaic" link and the line "Indicative screening from public data, not
+a regulatory decision." The map on the right shows the sites clustered and
+coloured by level (A1 green, A2 amber, A3 red, A4 purple, not screened
+grey), with a site card on click. If `/intake` fails (for example Gemini is
+overloaded), a simple form with the five intake fields appears so the demo
+still works.
+
+**Why:** One page with no build step is quick to change and easy to host
+alongside the API. The work type list for the form comes from
+`app/rules.yaml` via the page itself, so the API stays at three endpoints.
