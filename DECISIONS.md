@@ -132,3 +132,24 @@ refurbishment of existing network").
 - Sludge / anaerobic digestion widened to Air Pollution 1–4, treating AD as
   an industrial process that emits ammonia (cautious reading; values 3–4
   cover industrial processes).
+
+## 2026-10-02: Intake design
+
+**Decision:** The intake collects five answers before screening:
+
+- `work_type`: one of the work types listed in `app/rules.yaml`
+- `beyond_site`, `abstraction`, `dewatering`, `physical_survey_required`:
+  yes or no
+
+One set of answers applies to all the sites being screened. If the user
+describes a work type that isn't supported, they are told so and offered
+the closest supported type. The user confirms a summary of the answers
+before screening runs.
+
+**How:** `app/intake.py` runs the conversation through `app/llm.py`, which
+uses the provider set by `LLM_PROVIDER` in `.env` (`gemini` by default with
+`gemini-flash-latest`, or `claude`). The AI fills in answers the user has
+already given and asks only for what is missing, one question at a time, in
+plain English. Structured output limits the answers to allowed values, and
+the AI never suggests an assurance level; the level comes only from
+`app/scoring.py`.
