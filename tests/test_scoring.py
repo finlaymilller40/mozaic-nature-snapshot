@@ -222,3 +222,47 @@ def test_check_site_ancient_woodland_buffer():
 
     near = Point(edge[0], edge[1]).buffer(1)  # touches the wood
     assert check_site(near)["ancient_woodland"]
+
+
+# ------------------------------------------------ remaining work types
+
+
+@pytest.mark.parametrize("value, level", [(1, "A2"), (2, "A1"), (3, "A1")])
+def test_chp_triggers_only_on_all_combustion(value, level):
+    # Combustion 2 and 3 are > 20 MW and > 50 MW; works CHP is below both.
+    result = score_site(facts(irz_zones=[zone(irz_combustion=value)]), intake(work_type="treatment_works_chp"))
+    assert result["level"] == level
+    if level == "A2":
+        assert result["reasons"][0]["value"] == "irz_combustion=1"
+
+
+@pytest.mark.parametrize("category, value, level", [
+    ("irz_composting", 1, "A2"), ("irz_composting", 2, "A2"), ("irz_composting", 3, "A1"),
+    ("irz_air_pollution", 1, "A2"), ("irz_air_pollution", 4, "A2"),
+    ("irz_air_pollution", 5, "A1"), ("irz_air_pollution", 6, "A1"),  # livestock-only values
+])
+def test_sludge_ad_composting_and_air_pollution(category, value, level):
+    result = score_site(facts(irz_zones=[zone(**{category: value})]), intake(work_type="sludge_anaerobic_digestion"))
+    assert result["level"] == level
+
+
+def test_sludge_ad_lists_both_triggers():
+    site = facts(irz_zones=[zone(irz_composting=2, irz_air_pollution=3)])
+    result = score_site(site, intake(work_type="sludge_anaerobic_digestion"))
+    assert result["level"] == "A2"
+    assert sorted(r["value"] for r in result["reasons"]) == ["irz_air_pollution=3", "irz_composting=2"]
+
+
+@pytest.mark.parametrize("value, level", [(1, "A2"), (2, "A1")])
+def test_abstraction_work_type_triggers_water_supply_1(value, level):
+    result = score_site(facts(irz_zones=[zone(irz_water_supply=value)]), intake(work_type="new_increased_abstraction"))
+    assert result["level"] == level
+
+
+def test_abstraction_answer_with_water_supply_trigger_is_a3():
+    # The abstraction answer adds the Water Supply 1 trigger (rule 6) and,
+    # because a trigger fired, rule 5 raises the site to A3.
+    site = facts(irz_zones=[zone(irz_water_supply=1)])
+    result = score_site(site, intake(work_type="new_increased_abstraction", abstraction="yes"))
+    assert result["level"] == "A3"
+    assert rules_hit(result) == [5, 6]
