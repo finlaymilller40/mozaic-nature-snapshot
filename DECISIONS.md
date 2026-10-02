@@ -103,3 +103,24 @@ Highest level wins; all reasons listed. SSSI condition, European-site linkage an
 **Note for the build:** these rules must live in one config file
 (`app/rules.yaml`), not hard-coded, so they can be changed easily. Nothing
 is built yet; this entry records the decision only.
+
+## 2026-10-02: Work type → IRZ triggers
+
+Which IRZ category values count as a trigger for each type of work (rule 6
+of the assurance decision tree). Trigger values assume typical water company
+scale. To go into `app/rules.yaml` later; nothing is built yet. IRZ columns
+and value meanings are in `docs/irz_code_mapping.md`.
+
+| Work type | IRZ category | Trigger values |
+|---|---|---|
+| Works beyond existing site boundary | All Consultations | 1–4 |
+| New pipeline / sewer | Infrastructure | 1 |
+| Storm overflow / outfall / works discharge | Discharges | 2–5 |
+| Treatment works with combined heat and power | Combustion | 1 |
+| Sludge / anaerobic digestion | Composting; Air Pollution | Composting 1–2; Air Pollution 1–2 |
+| Pumping station / storm tank / larger works | Rural Non-Residential | 2 (and 3 if over 1 ha) |
+| New or increased abstraction | Water Supply | 1 (⚠️ approximation) |
+
+**Note:** pipe upgrades and refurbishment don't trigger Infrastructure, per
+the IRZ guidance (Infrastructure value 1 excludes "upgrades and
+refurbishment of existing network").
