@@ -26,8 +26,17 @@ def client():
 
 
 @pytest.fixture(scope="module")
-def examples(client):
-    return client.get("/sites/examples").json()
+def examples():
+    """The 461 Anglian Water storm overflows as lat/long GeoJSON (a regression set)."""
+    import geopandas as gpd
+    from shapely.geometry import mapping
+
+    overflows = gpd.read_file(CLEAN_DIR / "storm_overflows.gpkg").sort_values("unique_id").to_crs("EPSG:4326")
+    return feature_collection(*[
+        {"type": "Feature", "id": row.unique_id, "geometry": mapping(row.geometry),
+         "properties": {"id": row.unique_id, "name": row.site_name}}
+        for row in overflows.itertuples()
+    ])
 
 
 def feature_collection(*features):
@@ -47,18 +56,6 @@ def fake_turn(monkeypatch, turn=None):
 
     monkeypatch.setattr(main, "next_turn", next_turn)
     return seen
-
-
-# ---------------------------------------------------------- /sites/examples
-
-
-def test_examples_are_461_lat_long_points(examples):
-    features = examples["features"]
-    assert examples["type"] == "FeatureCollection" and len(features) == 461
-    first = features[0]
-    assert set(first["properties"]) == {"id", "name"}
-    lon, lat = first["geometry"]["coordinates"]
-    assert -1 < lon < 1 and 51.8 < lat < 52.9
 
 
 # ----------------------------------------------------------------- /intake
@@ -195,11 +192,11 @@ def test_line_is_scored_in_merged_sections(client):
     assert props["length_km"] == pytest.approx(2.236, abs=0.001)
     assert body["summary"]["sections_screened"] == 45  # 2.236 km in 50 m sections
 
-    sections = props["sections"]
+    sections = props["parts"]
     assert sections[0]["start_km"] == 0 and sections[-1]["end_km"] == pytest.approx(2.236, abs=0.001)
     for a, b in zip(sections, sections[1:]):
         assert a["end_km"] == pytest.approx(b["start_km"])  # continuous along the route
-        assert (a["level"], a["reasons"]) != (b["level"], b["reasons"])  # matching neighbours merged
+        assert a["level"] != b["level"]  # neighbours with the same level are merged
     levels = load_rules()["levels"]
     assert props["level"] == max((s["level"] for s in sections), key=levels.index)
     assert all(s["geometry"]["type"] in ("LineString", "MultiLineString") for s in sections)
@@ -215,7 +212,7 @@ def test_line_partly_outside_reports_length_not_checked(client):
     props = body["features"][0]["properties"]
     assert props["outside"]["warning"] == "3.0 km of this route is outside the screened area and has not been checked."
     assert props["outside"]["length_km"] == pytest.approx(3.0, abs=0.001)
-    assert props["sections"][0]["start_km"] == pytest.approx(3.0, abs=0.001)  # distances count the whole route
+    assert props["parts"][0]["start_km"] == pytest.approx(3.0, abs=0.001)  # distances count the whole route
 
 
 def test_lat_long_line_is_accepted(client):
@@ -225,8 +222,10 @@ def test_lat_long_line_is_accepted(client):
 
 
 def test_route_length_cap(client, monkeypatch):
-    cfg = dict(main.site_shapes.settings(), max_sections=10)
-    monkeypatch.setattr(main.site_shapes, "settings", lambda: cfg)
+    from app import sites
+
+    cfg = dict(sites.settings(), max_sections=10)
+    monkeypatch.setattr(sites, "settings", lambda: cfg)
     route = feature("LineString", [[500000, 250000], [501000, 250000]])  # 1 km = 20 sections
     response = client.post("/snapshot", json={"intake": PIPELINE, "crs": "EPSG:27700", "sites": feature_collection(route)})
     assert response.status_code == 422 and "the limit is about" in response.text
@@ -303,16 +302,45 @@ def test_geocode_outside_area_and_unknown(client, monkeypatch):
     assert client.get("/geocode", params={"postcode": "near Ely"}).status_code == 422
 
 
-# ----------------------------------------------------------------- /layers
+# ------------------------------------------- parts and features for the map
 
 
-def test_layers_are_lat_long_geojson(client):
-    protected = client.get("/layers/protected").json()
-    designations = {f["properties"]["designation"] for f in protected["features"]}
-    assert designations == {"SSSI", "SAC", "SPA", "Ramsar"}
-    irz = client.get("/layers/irz").json()
-    assert len(irz["features"]) > 8000 and re.fullmatch(r"\d{13}", irz["features"][0]["properties"]["irzcode"])
-    assert client.get("/layers/nope").status_code == 404
+def test_area_is_split_into_parts_by_level(client):
+    # A 600 m square, part of it in the Ouse Washes.
+    square = [[[542700, 279000], [543300, 279000], [543300, 279600], [542700, 279600], [542700, 279000]]]
+    body = client.post("/snapshot", json={
+        "intake": INTAKE | {"work_type": "storm_tank_larger_works"}, "crs": "EPSG:27700",
+        "sites": feature_collection(feature("Polygon", square)),
+    }).json()
+    props = body["features"][0]["properties"]
+    levels = [part["level"] for part in props["parts"]]
+    assert levels == ["A3", "A2"]  # highest first; one part per level
+    assert props["level"] == "A3"
+    assert sum(part["share"] for part in props["parts"]) == pytest.approx(1, abs=0.01)
+    a3 = props["parts"][0]
+    assert "Ouse Washes SSSI" in {r["value"] for r in a3["reasons"]} and a3["area_ha"] < 10
+
+
+def test_results_include_the_features_touched(client):
+    route = feature("LineString", [[542000, 279000], [544000, 280000]])
+    body = client.post("/snapshot", json={"intake": PIPELINE, "crs": "EPSG:27700", "sites": feature_collection(route)}).json()
+    props = body["features"][0]["properties"]
+    kinds = {f["kind"] for f in props["features"]}
+    assert {"sssi", "sac", "spa", "ramsar", "risk_zone"} <= kinds
+    sssi = next(f for f in props["features"] if f["kind"] == "sssi")
+    assert sssi["name"] == "Ouse Washes SSSI" and sssi["level"] == "A3" and 2 in sssi["rules"]
+    assert sssi["geometry"]["type"] in ("Polygon", "MultiPolygon")
+    # Every ref in the reasons points at a returned feature.
+    refs = {ref for part in props["parts"] for r in part["reasons"] for ref in r["refs"]}
+    assert refs == {f["ref"] for f in props["features"]}
+
+
+def test_quiet_stretch_says_nothing_was_found(client):
+    route = feature("LineString", [[500000, 250000], [503000, 250000]])
+    props = client.post("/snapshot", json={"intake": PIPELINE, "crs": "EPSG:27700", "sites": feature_collection(route)}).json()["features"][0]["properties"]
+    last = props["parts"][-1]
+    assert last["level"] == "A1" and [r["rule"] for r in last["reasons"]] == [8]
+    assert 8 not in [r["rule"] for r in props["reasons"]]  # the site as a whole had findings
 
 
 # --------------------------------------------------------------- frontend
@@ -324,7 +352,8 @@ def test_index_page_has_config_from_rules(client):
     blob = re.search(r'<script id="config" type="application/json">(.*?)</script>', response.text, re.S)
     config = json.loads(blob.group(1))
     rules = load_rules()
-    assert set(config["work_types"]) == set(rules["work_types"])
+    assert {k: v["shape"] for k, v in config["work_types"].items()} == {k: v["shape"] for k, v in rules["work_types"].items()}
+    assert config["level_meanings"] == rules["level_meanings"]
     assert config["site_geometry"] == rules["site_geometry"]
     assert "Indicative screening from public data, not a regulatory decision." in response.text
     assert "https://mozaic.earth/contact" in response.text

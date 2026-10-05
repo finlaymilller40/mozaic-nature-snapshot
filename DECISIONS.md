@@ -325,3 +325,113 @@ replaces the three-endpoint decision above. Other changes:
 **Why:** Geocoding and the background layers are separate jobs with their
 own caching, and keeping them out of `/snapshot` keeps that endpoint about
 screening.
+
+## 2026-10-05: Two-screen redesign
+
+**Decision:** The page is now two screens.
+
+1. **Describe the project.** A grey page with "Plan your project around
+   nature" at the top and a chat box in the middle. The AI asks the five
+   questions, then how the user wants to give the location: uploading
+   coordinates (noted as most accurate), a postcode, or drawing on a map.
+   Drawing, and checking postcode pins, happens in a map pop-up. The shape
+   is set by the work type (`shape` in `app/rules.yaml`: pipes are lines;
+   storm overflows, outfalls and abstraction are points; treatment works,
+   sludge/AD and storm tanks/larger works are areas), with a "Draw a
+   different shape" link. The five-question form remains for when the chat
+   isn't available.
+2. **Results.** A full map with a side summary. The work is drawn in
+   parts, each coloured by its level: a pipe's stretches (with A and B at
+   its ends), or the parts of an area, or of a point's 50 m circle, that
+   overlap different protected features. Only the protected areas and
+   risk zones the work touches are drawn, dimly, each with an explanation
+   box saying what it is, why it matters for the project and the level it
+   leads to. The side panel lists every part with its level and a one-line
+   reason, explains why A1 parts need only a desk check, and gives what
+   each level means. Clicking a row highlights the part and the features
+   behind it.
+
+**Level meanings** (`level_meanings` in `app/rules.yaml`): A1 nothing found,
+a desk check is enough; A2 an ecologist should review from records; A3
+specialist assessment, likely with Natural England input; A4 specialist
+assessment plus a site survey.
+
+**Parts merge by level.** Neighbouring sections (routes) and pieces (areas)
+with the same level merge, and each part lists all its reasons. Merging
+only identical reason sets left slivers where protected-site boundaries are
+digitised slightly differently. Areas are cut along the edges of every
+protected feature they overlap, and each piece is checked using a copy
+shrunk by 5 cm, so touching an edge doesn't count as overlapping.
+
+**Reasons point to map features.** Each reason carries `refs` to the
+features behind it (`layer:row`), and each result lists those `features`
+with their outlines, so the map can show and explain exactly the areas
+involved.
+
+**Removed:** the 461 storm overflow examples (kept in the data and used as a
+regression set in the tests) and the background map layers. The API is now
+`POST /intake`, `POST /snapshot` and `GET /geocode`.
+
+## 2026-10-05: Chat and form as two separate options; a more conversational assistant
+
+**Decision:** The first screen offers two ways to describe a project, chosen
+with a switch under the headline: **Chat with the assistant** (the default)
+and **Fill in a form**. The form is its own card, not a hidden fallback:
+step 1 asks the work type and the four yes/no questions, each with a short
+plain-English hint; step 2 is the location (upload coordinates, postcode or
+draw). The location tools are shared and move into whichever option is in
+use. If the chat isn't available or hits its message cap, the page switches
+to the form with a note, carrying over any answers the chat already found.
+
+The assistant's instructions now favour a natural conversation over a
+fixed list of questions. It starts from what the user said, asks an open
+question when the description is vague (e.g. new sewer or upgrade?), asks
+project-specific versions of the yes/no questions ("Will the trench be deep
+enough that you'd need to pump out groundwater?"), checks answers it can
+infer instead of asking cold, explains terms when asked, and accepts
+answers given out of order. The rules are unchanged: answers are only
+recorded once the user gives or confirms them, it never produces
+coordinates or guesses postcodes, and it never mentions levels.
+
+**Why:** Testing showed the fixed questions read as jargon ("outside the
+existing site boundary?") and asked things the description already made
+clear. Users who prefer to fill in fields directly get a proper form.
+
+## 2026-10-05: AI report and results assistant
+
+**Decision:** Two AI features on the results screen, alongside the intake
+chat:
+
+1. **Report** (`POST /report`, `app/report.py`). Claude writes a short
+   report from the screening: headline, overview, findings (each citing the
+   parts it covers, e.g. S1.P1), next steps and caveats. It's given only a
+   plain-English facts sheet (`app/explain.py`), never raw rule output. The
+   code checks every draft: cited parts must exist, any level mentioned must
+   match the cited parts, and every part above A1 must be covered. A failed
+   draft gets one retry with the problems listed; after that a plain report
+   is built from the facts. The report can be downloaded as Markdown.
+2. **Results assistant** (`POST /ask`, `app/assistant.py`). Claude answers
+   questions using tools that wrap the deterministic screening code:
+   `list_parts`, `get_part`, `find_feature` (incl. how much of the route is
+   inside a feature), `nearest` (closest SSSI, woodland etc., touched or
+   not) and `what_if` (re-screen with changed answers; the code works out
+   exactly which stretches change level). Answers cite parts as [S1.P2],
+   which the page turns into links that highlight them on the map. Every
+   level in an answer is checked against what the tools returned. Claude
+   only (multi-step tool use); it can't move or redraw the route.
+
+Both count against the per-session AI message cap. Results tabs: Sections,
+Report, Ask.
+
+**Why:** The rules engine makes every screening decision, which keeps
+results repeatable and auditable but meant the AI's only job was filling in
+five answers, which a form can also do. These features give the AI work
+that rules and forms can't: turning results into an actionable report,
+and reasoning over the results with the user ("what if we didn't need
+dewatering?", "how much of the route is in the Ouse Washes?"). In both, the
+AI explains and the deterministic code supplies the facts.
+
+Routes are checked as a 15 m corridor, so "inside" a site can mean the
+corridor overlaps while the centreline doesn't. The facts sheet and the
+assistant's instructions say so explicitly, after the assistant caught the
+ambiguity itself in testing.

@@ -3,9 +3,9 @@
 GET  /                the single-page frontend (app/static/)
 POST /intake          chat history -> next intake turn
 POST /snapshot        confirmed intake + sites (GeoJSON points, lines, polygons) -> levels
+POST /report          the same request -> an AI-written report, checked against the results
+POST /ask             the same request + a question -> the results assistant's answer
 GET  /geocode         a UK postcode -> a point to confirm (postcodes.io)
-GET  /layers/{name}   background map layers: protected sites, risk zones
-GET  /sites/examples  the example portfolio (Anglian Water storm overflows)
 
 Run locally with:  .venv/bin/uvicorn app.main:app --reload
 """
@@ -29,19 +29,18 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from shapely.geometry import mapping
 
-from app import sites as site_shapes
+from app import assistant, report
 from app.intake import FULL_POSTCODE, POSTCODE_DISTRICT, next_turn
 from app.llm import LLMError
-from app.scoring import CLEAN_DIR, ROOT, load_layers, load_rules, validate_intake
-from app.sites import BNG, NOT_SCREENED, WGS84, SiteError
+from app.scoring import ROOT, load_layers, load_rules, validate_intake
+from app.screening import ScreeningError, read_project, screen_project
+from app.sites import BNG, WGS84, to_lat_long
 
 AOI_ZIP = ROOT / "data" / "aoi" / "cambs_aoi.zip"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 POSTCODES_IO = "https://api.postcodes.io"
-LAYER_SIMPLIFY_M = {"protected": 10, "irz": 25}
 
 # Each browser session may send at most this many chat messages to the AI.
 # Sessions are identified by a random cookie; counts are kept in memory, so
@@ -56,20 +55,17 @@ state: dict[str, Any] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load the rules, data layers and example sites once, not per request.
+    # Load the rules and data layers once, not per request.
     load_rules()
     load_layers()
     state["aoi"] = gpd.read_file(f"zip://{AOI_ZIP}").to_crs(BNG).union_all()
-    state["examples"] = _example_sites()
-    state["layers"] = {name: _layer_json(name) for name in LAYER_SIMPLIFY_M}
-    state["index_html"] = _index_html()
     yield
     # State is kept on shutdown: startup reloads it, and clearing it would
     # break other app instances running in the same process (as in tests).
 
 
 app = FastAPI(title="Nature Exposure Snapshot", lifespan=lifespan)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # results include map outlines
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -99,7 +95,9 @@ class SnapshotRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index() -> str:
-    return state["index_html"]
+    # Built per request (it's cheap), so edits to the page and the file
+    # versions in it show up without restarting the server.
+    return _index_html()
 
 
 @app.post("/intake")
@@ -108,11 +106,22 @@ def intake(body: IntakeRequest, request: Request, response: Response) -> dict:
     if not history or history[0].role != "user":
         raise HTTPException(422, "history must start with the user's description of the work")
 
+    cookie = _use_message(request, response, sum(m.role == "user" for m in history))
+    try:
+        return next_turn([m.model_dump() for m in history], sites_placed=body.sites_placed)
+    except LLMError as exc:
+        raise HTTPException(503, f"Intake assistant unavailable: {exc}", headers=cookie) from None
+
+
+def _use_message(request: Request, response: Response, user_messages: int = 0) -> dict:
+    """Count one AI request against this browser session's cap.
+
+    Returns the session cookie header, for error responses (which don't
+    include cookies set on `response`). Raises 429 past the cap.
+    """
     session = request.cookies.get(SESSION_COOKIE) or secrets.token_urlsafe(16)
     response.set_cookie(SESSION_COOKIE, session, httponly=True, samesite="lax")
-    # Error responses don't include cookies set on `response`, so pass it on.
     cookie = {"set-cookie": response.headers["set-cookie"]}
-    user_messages = sum(m.role == "user" for m in history)
     with _session_lock:
         over_cap = _session_counts[session] >= INTAKE_MESSAGE_CAP or user_messages > INTAKE_MESSAGE_CAP
         if not over_cap:
@@ -120,65 +129,54 @@ def intake(body: IntakeRequest, request: Request, response: Response) -> dict:
     if over_cap:
         raise HTTPException(
             429,
-            f"This session has reached its limit of {INTAKE_MESSAGE_CAP} chat messages. "
-            "Please use the form to finish.",
+            f"This session has reached its limit of {INTAKE_MESSAGE_CAP} AI messages. "
+            "The screening results still work; the AI features don't.",
             headers=cookie,
         )
-    try:
-        return next_turn([m.model_dump() for m in history], sites_placed=body.sites_placed)
-    except LLMError as exc:
-        raise HTTPException(503, f"Intake assistant unavailable: {exc}", headers=cookie) from None
+    return cookie
 
 
 @app.post("/snapshot")
 def snapshot(request: SnapshotRequest) -> dict:
     try:
         validate_intake(request.intake)
-    except ValueError as exc:
+        return screen_project(read_project(request.sites, request.crs, state["aoi"]), request.intake)
+    except (ValueError, ScreeningError) as exc:
         raise HTTPException(422, str(exc)) from None
 
-    cfg = site_shapes.settings()
-    features = request.sites.get("features")
-    if request.sites.get("type") != "FeatureCollection" or not isinstance(features, list):
-        raise HTTPException(422, "sites must be a GeoJSON FeatureCollection")
-    if not features:
-        raise HTTPException(422, "sites has no features")
-    if len(features) > cfg["max_sites"]:
-        raise HTTPException(422, f"Too many sites: {len(features)}. The limit is {cfg['max_sites']} per screening.")
 
-    plans = []
-    for i, feature in enumerate(features):
-        feature = feature or {}
-        try:
-            geom = site_shapes.read_geometry(feature.get("geometry"), feature.get("crs") or request.crs)
-        except SiteError as exc:
-            raise HTTPException(422, f"Feature {i}: {exc}") from None
-        plans.append(site_shapes.plan_site(geom, state["aoi"]))
+@app.post("/report")
+def write_report(body: SnapshotRequest, request: Request, response: Response) -> dict:
+    try:
+        validate_intake(body.intake)
+        result = screen_project(read_project(body.sites, body.crs, state["aoi"]), body.intake)
+    except (ValueError, ScreeningError) as exc:
+        raise HTTPException(422, str(exc)) from None
+    cookie = _use_message(request, response)
+    try:
+        return report.generate_report(result, body.intake)
+    except LLMError as exc:
+        raise HTTPException(503, f"The report writer is unavailable: {exc}", headers=cookie) from None
 
-    sections = sum(len(p.sections) for p in plans)
-    if sections > cfg["max_sections"]:
-        km = sections * cfg["section_length_m"] / 1000
-        limit = cfg["max_sections"] * cfg["section_length_m"] / 1000
-        raise HTTPException(422, f"Routes total about {km:.0f} km; the limit is about {limit:.0f} km per screening.")
 
-    counts = {level: 0 for level in load_rules()["levels"]} | {NOT_SCREENED: 0}
-    out = []
-    for i, (feature, plan) in enumerate(zip(features, plans)):
-        result = site_shapes.screen(plan, request.intake)
-        counts[result["level"] or NOT_SCREENED] += 1
-        properties = {
-            "id": _feature_id(feature, i),
-            **{k: v for k, v in (feature.get("properties") or {}).items() if k not in result},
-            "kind": plan.kind,
-            **result,
-        }
-        out.append({"type": "Feature", "geometry": site_shapes.to_lat_long(plan.geometry), "properties": properties})
+class AskRequest(SnapshotRequest):
+    history: list[ChatMessage]  # earlier questions and answers, ending with the new question
 
-    return {
-        "type": "FeatureCollection",
-        "features": out,
-        "summary": {"sites": len(features), "counts": counts, "sections_screened": sections},
-    }
+
+@app.post("/ask")
+def ask(body: AskRequest, request: Request, response: Response) -> dict:
+    if not body.history or body.history[-1].role != "user":
+        raise HTTPException(422, "history must end with the user's question")
+    try:
+        validate_intake(body.intake)
+        project = read_project(body.sites, body.crs, state["aoi"])
+    except (ValueError, ScreeningError) as exc:
+        raise HTTPException(422, str(exc)) from None
+    cookie = _use_message(request, response)
+    try:
+        return assistant.answer(project, body.intake, [m.model_dump() for m in body.history])
+    except LLMError as exc:
+        raise HTTPException(503, f"The assistant is unavailable: {exc}", headers=cookie) from None
 
 
 @app.get("/geocode")
@@ -220,24 +218,7 @@ def geocode(postcode: str) -> dict:
     }
 
 
-@app.get("/layers/{name}")
-def layer(name: str) -> Response:
-    if name not in state["layers"]:
-        raise HTTPException(404, f"No layer called {name!r}. Layers: {sorted(state['layers'])}")
-    return Response(state["layers"][name], media_type="application/json")
-
-
-@app.get("/sites/examples")
-def sites_examples() -> dict:
-    return state["examples"]
-
-
 # ----------------------------------------------------------------- helpers
-
-
-def _feature_id(feature: dict, index: int) -> str:
-    fid = feature.get("id", (feature.get("properties") or {}).get("id"))
-    return str(fid) if fid is not None else str(index)
 
 
 def _index_html() -> str:
@@ -245,18 +226,24 @@ def _index_html() -> str:
     rules = load_rules()
     config = {
         "work_types": {
-            key: {"label": spec["label"], "triggers": spec["triggers"]}
+            key: {"label": spec["label"], "shape": spec["shape"]}
             for key, spec in rules["work_types"].items()
         },
-        "intake_triggers": {key: spec["triggers"] for key, spec in rules.get("intake_triggers", {}).items()},
-        "all_consultations_values": next(r for r in rules["rules"] if r["check"] == "irz_all_consultations")["values"],
+        "levels": rules["levels"],
+        "level_meanings": rules["level_meanings"],
         "site_geometry": rules["site_geometry"],
+        "ancient_woodland_buffer_m": next(r for r in rules["rules"] if r["check"] == "near_ancient_woodland")["buffer_m"],
         # The screened area's outline, so the map can show it.
-        "aoi": site_shapes.to_lat_long(state["aoi"].segmentize(1_000)),
+        "aoi": to_lat_long(state["aoi"].segmentize(1_000)),
     }
     # Escape "</" so the JSON can't close its <script> tag.
     payload = json.dumps(config).replace("</", "<\\/")
-    return (STATIC_DIR / "index.html").read_text().replace("{{CONFIG}}", payload)
+    html = (STATIC_DIR / "index.html").read_text().replace("{{CONFIG}}", payload)
+    # Version the static files so browsers fetch new copies after a change.
+    for name in ("app.js", "style.css"):
+        version = int((STATIC_DIR / name).stat().st_mtime)
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={version}")
+    return html
 
 
 @lru_cache(maxsize=1024)
@@ -271,46 +258,3 @@ def _postcodes_io(path: str) -> dict | None:
     if reply.status_code != 200:
         raise HTTPException(502, f"The postcode service returned an error ({reply.status_code}).")
     return reply.json().get("result")
-
-
-def _layer_json(name: str) -> bytes:
-    """A background layer as compact lat/long GeoJSON, simplified for display only."""
-    layers = load_layers()
-    if name == "protected":
-        parts = [
-            layers["sssi"].assign(designation="SSSI", site=layers["sssi"]["name"]),
-            layers["european"],
-        ]
-        gdf = gpd.GeoDataFrame(
-            [row for part in parts for row in part[["designation", "site", "geometry"]].to_dict("records")],
-            geometry="geometry", crs=BNG,
-        )
-        columns = ["designation", "site"]
-    else:
-        gdf = layers["irz"][["id", "irzcode", "geometry"]]
-        columns = ["irzcode"]
-
-    simplified = gdf.geometry.simplify(LAYER_SIMPLIFY_M[name], preserve_topology=True).to_crs(WGS84)
-    simplified = shapely.set_precision(simplified.values, 1e-5)
-    features = [
-        {"type": "Feature", "geometry": mapping(geom), "properties": {c: row[c] for c in columns}}
-        for geom, (_, row) in zip(simplified, gdf.iterrows())
-        if not geom.is_empty
-    ]
-    return json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":")).encode()
-
-
-def _example_sites() -> dict:
-    overflows = gpd.read_file(CLEAN_DIR / "storm_overflows.gpkg").sort_values("unique_id").to_crs(WGS84)
-    return {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "id": row.unique_id,
-                "geometry": mapping(row.geometry),
-                "properties": {"id": row.unique_id, "name": row.site_name},
-            }
-            for row in overflows.itertuples()
-        ],
-    }

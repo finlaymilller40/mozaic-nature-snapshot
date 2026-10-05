@@ -19,6 +19,7 @@ def zone(zone_id="z1", european_sites=(), **values):
     vals = {c: 0 for c in IRZ_CATEGORIES}
     vals.update(values)
     return {
+        "key": f"irz:{zone_id}",
         "id": zone_id,
         "irzcode": "".join(str(vals[c]) for c in IRZ_CATEGORIES),
         "values": vals,
@@ -74,6 +75,7 @@ def test_a2_irz_trigger_for_work_type():
     assert result["reasons"] == [{
         "rule": 6, "level": "A2", "layer": "irz", "value": "irz_discharges=5",
         "detail": "Triggered for Storm overflow / outfall / works discharge (1 zone(s))",
+        "refs": ["irz:z1"],  # the map feature behind the reason
     }]
 
 

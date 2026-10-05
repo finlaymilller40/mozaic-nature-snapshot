@@ -5,106 +5,179 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nature Exposure Snapshot</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="layout">
-    <section class="panel">
-      <header>
-        <h1>Nature Exposure Snapshot</h1>
-        <p class="muted">Describe the work you're planning and where it is. We'll check it against protected sites and Natural England's risk zones.</p>
-      </header>
+  <!-- Screen 1: describe the project -->
+  <main id="intake-screen" class="intake">
+    <header class="intro">
+      <h1>Plan your project around nature</h1>
+      <p>Tell us what you're building and where. We'll check it against protected sites and show what each part needs.</p>
+    </header>
 
-      <div id="chat">
-        <div id="messages" aria-live="polite"></div>
+    <div class="mode-switch" role="tablist" aria-label="How to describe your project">
+      <button id="mode-chat" type="button" role="tab" aria-selected="true" class="active">Chat with the assistant</button>
+      <button id="mode-form" type="button" role="tab" aria-selected="false">Fill in a form</button>
+    </div>
 
-        <div id="confirm-box" class="card" hidden>
-          <p id="summary-text"></p>
-          <div class="buttons">
-            <button id="confirm-btn" type="button">Confirm</button>
-            <button id="edit-btn" type="button" class="secondary">Edit</button>
-          </div>
+    <!-- Option 1: chat -->
+    <section id="chat-card" class="chat-card" aria-label="Project chat">
+      <div id="messages" aria-live="polite"></div>
+      <div id="chat-location-slot"></div>
+
+      <!-- Summary to confirm -->
+      <div id="confirm-card" class="inline-card" hidden>
+        <p id="summary-text"></p>
+        <div class="button-row">
+          <button id="confirm-btn" type="button">Confirm and check my project</button>
+          <button id="edit-btn" type="button" class="secondary">Change something</button>
         </div>
-
-        <form id="chat-form" autocomplete="off">
-          <input id="chat-input" type="text" placeholder="e.g. We're upgrading 12 storm overflows" aria-label="Message" required>
-          <button type="submit">Send</button>
-        </form>
-        <button id="sites-done" type="button" class="secondary" hidden>I've added my sites</button>
-        <button id="use-form" type="button" class="link">Use a form instead</button>
       </div>
 
-      <form id="fallback" class="card" hidden>
-        <p id="fallback-note" class="muted"></p>
-        <label>Type of work
-          <select name="work_type" required><option value="">Choose…</option></select>
-        </label>
-        <label>Any work outside the existing site boundary?
-          <select name="beyond_site" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
-        </label>
-        <label>New or increased water abstraction?
-          <select name="abstraction" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
-        </label>
-        <label>Pumping out groundwater (dewatering)?
-          <select name="dewatering" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
-        </label>
-        <label>Physical site survey needed?
-          <select name="physical_survey_required" required><option value="">Choose…</option><option>yes</option><option>no</option></select>
-        </label>
-        <button type="submit">Screen sites</button>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" type="text" placeholder="e.g. We're laying a new 2 km sewer to the treatment works" aria-label="Message" required>
+        <button type="submit">Send</button>
       </form>
-
-      <section id="sites-panel" class="card">
-        <h2>Your sites <span id="site-count" class="muted"></span></h2>
-        <p class="muted small">Draw a point, a line for a pipeline, or an outline with the tools on the map, give a postcode in the chat, or upload coordinates.</p>
-        <p class="note">Upload coordinates for the most accurate results.</p>
-
-        <div id="overflow-picker" hidden>
-          <p class="small">Click storm overflows on the map to add them.</p>
-          <button id="use-all-overflows" type="button" class="secondary">Use all 461 storm overflows</button>
-        </div>
-
-        <ul id="site-list"></ul>
-
-        <details id="upload">
-          <summary>Upload or paste coordinates</summary>
-          <p class="small muted">
-            <strong>CSV</strong> with a header row and one of: <code>easting,northing</code> (British National Grid),
-            <code>lat,lon</code>, or <code>grid_ref</code> (e.g. TL2709096270). Optional: <code>name</code>, and
-            <code>route</code> to join rows with the same route into a line, in order.
-            <strong>GeoJSON</strong> with points, lines or polygons, in lat/long or British National Grid.
-          </p>
-          <textarea id="paste" rows="5" placeholder="name,easting,northing&#10;Pumping station,532790,249740"></textarea>
-          <div class="buttons">
-            <button id="add-pasted" type="button" class="secondary">Add pasted sites</button>
-            <label class="file-button secondary">Upload file<input id="upload-file" type="file" accept=".csv,.geojson,.json,text/csv,application/json" hidden></label>
-          </div>
-          <p id="upload-status" class="small" aria-live="polite"></p>
-        </details>
-      </section>
-
-      <p id="status" class="muted" aria-live="polite"></p>
-
-      <div id="results" hidden>
-        <h2>Results</h2>
-        <ul id="counts"></ul>
-        <ul id="warnings"></ul>
-        <div class="buttons">
-          <a class="button" href="https://mozaic.earth/contact" target="_blank" rel="noopener">Book a call with Mozaic</a>
-          <button id="edit-sites" type="button" class="secondary">Change sites</button>
-        </div>
-        <p class="disclaimer">Indicative screening from public data, not a regulatory decision.</p>
-      </div>
     </section>
 
-    <section id="map" aria-label="Map"></section>
+    <!-- Option 2: form -->
+    <form id="project-form" class="chat-card form-card" hidden>
+      <p id="form-note" class="note" hidden></p>
+
+      <h2 class="step">1. About the work</h2>
+      <label class="field">What type of work is it?
+        <select name="work_type" required><option value="">Choose…</option></select>
+      </label>
+        <fieldset class="yesno">
+          <legend>Will any of the work happen outside land you already operate?</legend>
+          <p class="hint">For example across fields, roads or other people's land. Work inside an existing treatment works or pumping station counts as no.</p>
+          <label><input type="radio" name="beyond_site" value="yes" required> Yes</label>
+          <label><input type="radio" name="beyond_site" value="no"> No</label>
+        </fieldset>
+        <fieldset class="yesno">
+          <legend>Will the work take new or extra water from a river, lake or borehole?</legend>
+          <p class="hint">Normal sewage and rainwater flows don't count.</p>
+          <label><input type="radio" name="abstraction" value="yes" required> Yes</label>
+          <label><input type="radio" name="abstraction" value="no"> No</label>
+        </fieldset>
+        <fieldset class="yesno">
+          <legend>Will you need to pump groundwater out of trenches or pits while you dig?</legend>
+          <p class="hint">This is often needed for deep trenches or where the ground is wet.</p>
+          <label><input type="radio" name="dewatering" value="yes" required> Yes</label>
+          <label><input type="radio" name="dewatering" value="no"> No</label>
+        </fieldset>
+        <fieldset class="yesno">
+          <legend>Does your company, or this project, require someone to survey the sites in person?</legend>
+          <p class="hint">For example an ecologist's site visit. A required site survey is our A4 step: any part that needs specialist assessment moves up to A4, specialist assessment plus a site survey. Answer no if you'll work from maps and records.</p>
+          <label><input type="radio" name="physical_survey_required" value="yes" required> Yes</label>
+          <label><input type="radio" name="physical_survey_required" value="no"> No</label>
+        </fieldset>
+
+      <h2 class="step">2. Where is it?</h2>
+      <div id="form-location-slot"></div>
+
+      <button type="submit" class="submit">Check my project</button>
+    </form>
+
+    <!-- Location tools, shared by the chat and the form (moved into whichever is in use) -->
+    <div id="location-block">
+      <div id="location-card" class="inline-card" hidden>
+        <p class="card-title">How would you like to show where the work is?</p>
+        <div class="choice-row">
+          <button type="button" class="choice" data-method="coordinates">Upload coordinates</button>
+          <button type="button" class="choice" data-method="postcode">Enter a postcode</button>
+          <button type="button" class="choice" data-method="draw">Draw on a map</button>
+        </div>
+        <p class="note">Upload coordinates for the most accurate results.</p>
+      </div>
+
+      <div id="upload-card" class="inline-card" hidden>
+        <p class="card-title">Upload or paste coordinates</p>
+        <p class="small muted">
+          <strong>CSV</strong> with a header row and one of <code>easting,northing</code>, <code>lat,lon</code>
+          or <code>grid_ref</code>; optional <code>name</code>, and <code>route</code> to join rows into a line.
+          Or <strong>GeoJSON</strong> points, lines or polygons.
+        </p>
+        <textarea id="paste" rows="4" placeholder="name,route,easting,northing&#10;New sewer,R1,553000,280000&#10;New sewer,R1,554000,280500"></textarea>
+        <div class="button-row">
+          <button id="add-pasted" type="button">Add coordinates</button>
+          <label class="button secondary">Choose a file<input id="upload-file" type="file" accept=".csv,.geojson,.json,text/csv,application/json" hidden></label>
+        </div>
+        <p id="upload-status" class="small" aria-live="polite"></p>
+      </div>
+
+      <div id="sites-line" class="sites-line" hidden>
+        <div id="sites-preview" title="View or edit on a map"></div>
+        <span id="sites-text"></span>
+        <button id="open-map" type="button" class="link">View or edit on a map</button>
+      </div>
+    </div>
+
+    <p id="status" class="status muted" aria-live="polite"></p>
+    <p class="fineprint">Indicative screening from public data, not a regulatory decision.</p>
+  </main>
+
+  <!-- Map pop-up for drawing sites or checking postcode pins -->
+  <div id="draw-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="draw-title">
+    <div class="modal-box">
+      <header>
+        <h2 id="draw-title">Draw your site</h2>
+        <p id="draw-hint" class="muted"></p>
+      </header>
+      <div id="draw-map"></div>
+      <footer>
+        <button id="other-shape" type="button" class="link">Draw a different shape</button>
+        <span id="draw-count" class="muted"></span>
+        <button id="draw-cancel" type="button" class="secondary">Cancel</button>
+        <button id="draw-done" type="button">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Screen 2: results -->
+  <main id="results-screen" class="results" hidden>
+    <aside class="summary">
+      <div id="overall"></div>
+
+      <div class="tabs" role="tablist" aria-label="Results">
+        <button type="button" role="tab" class="tab active" data-tab="sections" aria-selected="true">Sections</button>
+        <button type="button" role="tab" class="tab" data-tab="report" aria-selected="false">Report</button>
+        <button type="button" role="tab" class="tab" data-tab="ask" aria-selected="false">Ask</button>
+      </div>
+
+      <div id="tab-sections" class="tab-panel">
+        <div id="site-results"></div>
+        <ul id="warnings"></ul>
+        <div id="level-key"></div>
+      </div>
+
+      <div id="tab-report" class="tab-panel" hidden>
+        <div id="report-body"></div>
+        <button id="download-report" type="button" class="secondary" hidden>Download the report</button>
+      </div>
+
+      <div id="tab-ask" class="tab-panel" hidden>
+        <p class="small muted">Ask about these results. The assistant looks things up in the screening and can test "what if" changes to your answers.</p>
+        <div id="ask-messages" aria-live="polite"></div>
+        <div id="ask-suggestions" class="chips"></div>
+        <form id="ask-form" autocomplete="off">
+          <input id="ask-input" type="text" placeholder="e.g. Which stretch is the problem?" aria-label="Your question" required>
+          <button type="submit">Ask</button>
+        </form>
+      </div>
+
+      <div class="summary-actions">
+        <a class="button" href="https://mozaic.earth/contact" target="_blank" rel="noopener">Book a call with Mozaic</a>
+        <button id="back-btn" type="button" class="secondary">Change my answers</button>
+      </div>
+      <p class="fineprint">Indicative screening from public data, not a regulatory decision.</p>
+    </aside>
+    <section id="map" aria-label="Results map"></section>
   </main>
 
   <script id="config" type="application/json">{{CONFIG}}</script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
   <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
   <script src="/static/app.js"></script>

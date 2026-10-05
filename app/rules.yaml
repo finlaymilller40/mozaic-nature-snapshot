@@ -8,6 +8,13 @@
 
 levels: [A1, A2, A3, A4]   # lowest to highest; the highest level found wins
 
+# What each level asks the user to do. Shown on the results screen.
+level_meanings:
+  A1: Nothing found. A desk check to confirm is enough.
+  A2: An ecologist should review this from records.
+  A3: Specialist assessment needed, likely with Natural England input.
+  A4: Specialist assessment plus a site survey.
+
 # How submitted sites become the areas that get screened (app/sites.py).
 site_geometry:
   point_buffer_m: 50        # points are screened as a circle of this radius
@@ -107,28 +114,34 @@ context_only:
 # typical water company scale. A trigger with min_site_area_ha only applies
 # when the site is at least that big.
 work_types:
+  # shape: what the user draws for this work type (point, line or polygon).
   new_pipeline_sewer:
     label: New pipeline / sewer
+    shape: line
     triggers:
       - {category: irz_infrastructure, values: [1]}
 
   pipe_upgrade_refurbishment:
     label: Pipe upgrade / refurbishment
+    shape: line
     note: Upgrades and refurbishment of the existing network don't trigger Infrastructure, per the IRZ guidance.
     triggers: []
 
   storm_overflow:
     label: Storm overflow / outfall / works discharge
+    shape: point
     triggers:
       - {category: irz_discharges, values: [2, 3, 4, 5]}
 
   treatment_works_chp:
     label: Treatment works with combined heat and power
+    shape: polygon
     triggers:
       - {category: irz_combustion, values: [1]}
 
   sludge_anaerobic_digestion:
     label: Sludge / anaerobic digestion
+    shape: polygon
     note: AD treated as an industrial process that emits ammonia (cautious reading).
     triggers:
       - {category: irz_composting, values: [1, 2]}
@@ -136,12 +149,14 @@ work_types:
 
   storm_tank_larger_works:
     label: Storm tank / larger works
+    shape: polygon
     triggers:
       - {category: irz_rural_non_residential, values: [2]}
       - {category: irz_rural_non_residential, values: [3], min_site_area_ha: 1}
 
   new_increased_abstraction:
     label: New or increased abstraction
+    shape: point
     note: Approximation.
     triggers:
       - {category: irz_water_supply, values: [1]}

@@ -160,3 +160,70 @@ def _gemini(key: str, system: str, history: list[dict], schema: type[T]) -> T:
     if not response.text:
         raise LLMError("gemini returned no content")
     return schema.model_validate_json(response.text)
+
+
+# ------------------------------------------------------------- tool loop
+
+TOOL_ROUNDS = 8  # tool calls Claude may make while answering one question
+
+
+def run_tools(system: str, messages: list[dict], tools: list[dict], handle) -> str:
+    """Let Claude answer using tools, and return its final text.
+
+    tools are Anthropic tool definitions; handle(name, input) runs one and
+    returns something JSON-serialisable. Claude only: the results assistant
+    needs multi-step tool use.
+    """
+    if provider() != "claude":
+        raise LLMError("The results assistant needs Claude (set LLM_PROVIDER=claude).")
+    key = os.environ.get(KEY_VARS["claude"], "").strip()
+    if not key or key == PLACEHOLDER_KEY:
+        raise LLMError(f"{KEY_VARS['claude']} is not set in .env")
+    try:
+        return _claude_tool_loop(key, system, messages, tools, handle)
+    except LLMError:
+        raise
+    except Exception as exc:
+        message = str(exc).replace(key, "[REDACTED]")
+        raise LLMError(f"claude request failed ({type(exc).__name__}): {message}") from None
+
+
+def _claude_tool_loop(key: str, system: str, messages: list[dict], tools: list[dict], handle) -> str:
+    import json
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=key)
+    messages = list(messages)
+    for _ in range(TOOL_ROUNDS):
+        response = client.beta.messages.create(
+            model=model(),
+            max_tokens=16000,
+            system=system,
+            messages=messages,
+            tools=tools,
+            tool_choice={"type": "auto"},
+            output_config={"effort": "medium"},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        )
+        if response.stop_reason == "refusal":
+            raise LLMError("claude declined the request")
+        calls = [b for b in response.content if b.type == "tool_use"]
+        if response.stop_reason != "tool_use" or not calls:
+            text = "".join(b.text for b in response.content if b.type == "text").strip()
+            if not text:
+                raise LLMError(f"claude gave no answer (stop_reason={response.stop_reason})")
+            return text
+        # Send the whole response back unchanged (thinking blocks included),
+        # then all tool results together in one message.
+        messages.append({"role": "assistant", "content": response.content})
+        results = []
+        for call in calls:
+            try:
+                content, is_error = json.dumps(handle(call.name, call.input), ensure_ascii=False), False
+            except Exception as exc:  # report tool errors to Claude rather than failing the answer
+                content, is_error = f"Error: {exc}", True
+            results.append({"type": "tool_result", "tool_use_id": call.id, "content": content, "is_error": is_error})
+        messages.append({"role": "user", "content": results})
+    raise LLMError("claude used too many steps without answering")

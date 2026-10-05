@@ -102,26 +102,29 @@ def check_site(geometry: BaseGeometry, rules: dict | None = None) -> dict:
 
     irz_zones = [
         {
+            "key": f"irz:{index}",
             "id": zone["id"],
             "irzcode": zone["irzcode"],
             "values": {c: int(zone[c]) for c in irz_columns},
             "european_sites": list(zone["european_sites"]),
         }
-        for _, zone in zones.iterrows()
+        for index, zone in zones.iterrows()
     ]
 
     return {
         "site_area_ha": round(geometry.area / 10_000, 4),
         "european_sites": [
-            {"designation": r.designation, "name": r.site, "code": r.site_code}
+            {"designation": r.designation, "name": r.site, "code": r.site_code,
+             "keys": _keys("european", european, (european.designation == r.designation) & (european.site_code == r.site_code))}
             for r in european.drop_duplicates(["designation", "site_code"]).itertuples()
         ],
         "sssi": [
-            {"name": r.name, "ref_code": r.ref_code}
+            {"name": r.name, "ref_code": r.ref_code, "keys": _keys("sssi", sssi, sssi.ref_code == r.ref_code)}
             for r in sssi.drop_duplicates("ref_code").itertuples()
         ],
         "ancient_woodland": [
             {
+                "key": f"ancient_woodland:{r.Index}",
                 "name": _text(r.name),
                 "status": r.status,
                 "source": r.source,
@@ -130,12 +133,18 @@ def check_site(geometry: BaseGeometry, rules: dict | None = None) -> dict:
             for r in woods.itertuples()
         ],
         "priority_habitat": [
-            {"uid": r.uid, "main_habitat": r.mainhabs, "additional_habitats": _text(r.addhabs)}
+            {"key": f"priority_habitat:{r.Index}", "uid": r.uid, "main_habitat": r.mainhabs,
+             "additional_habitats": _text(r.addhabs)}
             for r in habitat.itertuples()
         ],
         "irz_zones": irz_zones,
         "nearest_sssi_unit": _nearest_sssi_unit(layers["sssi_units"], geometry),
     }
+
+
+def _keys(layer: str, rows: gpd.GeoDataFrame, mask) -> list[str]:
+    """Keys ("layer:row") of the map features behind a fact, so results can show them."""
+    return [f"{layer}:{i}" for i in rows.index[mask]]
 
 
 def _text(value) -> str | None:
@@ -182,7 +191,7 @@ def score_site(facts: dict, intake: dict, rules: dict | None = None) -> dict:
         rule = _rule(rules, "nothing_found")
         reasons.append({
             "rule": rule["id"], "level": rule["level"], "layer": None, "value": None,
-            "detail": f"{rule['description']}: {rule['note'].lower()}",
+            "detail": f"{rule['description']}: {rule['note'].lower()}", "refs": [],
         })
 
     level = max((r["level"] for r in reasons), key=levels.index)
@@ -199,7 +208,7 @@ def score_site(facts: dict, intake: dict, rules: dict | None = None) -> dict:
         reasons.append({
             "rule": survey["id"], "level": survey["to_level"], "layer": "intake",
             "value": "physical_survey_required=yes",
-            "detail": f"Physical survey required: {survey['from_level']} becomes {survey['to_level']}",
+            "detail": f"Physical survey required: {survey['from_level']} becomes {survey['to_level']}", "refs": [],
         })
 
     return {
@@ -264,14 +273,15 @@ def _irz_trigger_hits(facts: dict, intake: dict, rules: dict) -> list[dict]:
 
 def _overlaps_european_site(rule, facts, intake, irz_hits):
     return [
-        {"layer": s["designation"].lower(), "value": s["name"], "detail": f"{rule['description']}: {s['designation']} {s['name']} ({s['code']})"}
+        {"layer": s["designation"].lower(), "value": s["name"],
+         "detail": f"{rule['description']}: {s['designation']} {s['name']} ({s['code']})", "refs": s.get("keys", [])}
         for s in facts["european_sites"]
     ]
 
 
 def _overlaps_sssi(rule, facts, intake, irz_hits):
     return [
-        {"layer": "sssi", "value": s["name"], "detail": f"{rule['description']}: {s['name']}"}
+        {"layer": "sssi", "value": s["name"], "detail": f"{rule['description']}: {s['name']}", "refs": s.get("keys", [])}
         for s in facts["sssi"]
     ]
 
@@ -283,20 +293,22 @@ def _near_ancient_woodland(rule, facts, intake, irz_hits):
             "value": w["name"] or w["status"],
             "detail": f"{w['status']} ({w['source']} inventory) {w['distance_m']} m away, "
                       f"within {rule['buffer_m']} m. Source: {rule['source']}",
+            "refs": [w["key"]] if w.get("key") else [],
         }
         for w in facts["ancient_woodland"]
     ]
 
 
 def _irz_all_consultations(rule, facts, intake, irz_hits):
-    counts = defaultdict(int)
+    zones = defaultdict(list)
     for zone in facts["irz_zones"]:
         value = zone["values"]["irz_all_consultations"]
         if value in rule["values"]:
-            counts[value] += 1
+            zones[value].append(zone.get("key"))
     return [
-        {"layer": "irz", "value": f"irz_all_consultations={v}", "detail": f"{rule['description']} ({n} zone(s))"}
-        for v, n in sorted(counts.items())
+        {"layer": "irz", "value": f"irz_all_consultations={v}", "detail": f"{rule['description']} ({len(keys)} zone(s))",
+         "refs": [k for k in keys if k]}
+        for v, keys in sorted(zones.items())
     ]
 
 
@@ -309,26 +321,29 @@ def _abstraction_or_dewatering_with_irz_trigger(rule, facts, intake, irz_hits):
         "layer": "intake",
         "value": ", ".join(f"{f}=yes" for f in answered),
         "detail": f"{rule['description']} ({', '.join(triggers)}). {rule['note']}",
+        "refs": sorted({h["zone"]["key"] for h in irz_hits if h["zone"].get("key")}),
     }]
 
 
 def _irz_work_type_trigger(rule, facts, intake, irz_hits):
-    grouped = defaultdict(set)
+    grouped = defaultdict(dict)
     for hit in irz_hits:
-        grouped[(hit["category"], hit["value"], hit["source"])].add(hit["zone"]["id"])
+        grouped[(hit["category"], hit["value"], hit["source"])][hit["zone"]["id"]] = hit["zone"].get("key")
     return [
-        {"layer": "irz", "value": f"{cat}={value}", "detail": f"Triggered for {source} ({len(zones)} zone(s))"}
+        {"layer": "irz", "value": f"{cat}={value}", "detail": f"Triggered for {source} ({len(zones)} zone(s))",
+         "refs": sorted(k for k in zones.values() if k)}
         for (cat, value, source), zones in sorted(grouped.items())
     ]
 
 
 def _overlaps_priority_habitat(rule, facts, intake, irz_hits):
-    counts = defaultdict(int)
+    keys = defaultdict(list)
     for h in facts["priority_habitat"]:
-        counts[h["main_habitat"]] += 1
+        keys[h["main_habitat"]].append(h.get("key"))
     return [
-        {"layer": "priority_habitat", "value": habitat, "detail": f"{rule['description']} ({n} polygon(s))"}
-        for habitat, n in sorted(counts.items())
+        {"layer": "priority_habitat", "value": habitat, "detail": f"{rule['description']} ({len(k)} polygon(s))",
+         "refs": [x for x in k if x]}
+        for habitat, k in sorted(keys.items())
     ]
 
 

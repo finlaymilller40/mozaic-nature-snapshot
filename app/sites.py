@@ -17,7 +17,7 @@ from shapely.geometry import LineString, MultiLineString, Point, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, substring, transform
 
-from app.scoring import check_site, load_rules, score_site
+from app.scoring import check_site, load_layers, load_rules, score_site
 
 WGS84 = "EPSG:4326"
 BNG = "EPSG:27700"
@@ -204,23 +204,188 @@ def _polygonal(geom: BaseGeometry) -> BaseGeometry:
 
 
 def screen(plan: Plan, intake: dict) -> dict:
-    """Score a planned site. Returns result properties (geometries in lat/long)."""
+    """Score a planned site. Returns result properties (geometries in lat/long).
+
+    Every site comes back as parts, each with its own level and reasons:
+    a route's stretches, or the pieces of an area (or of a point's circle)
+    that overlap different protected features. The site's level is its
+    highest part. `features` lists the protected areas and risk zones the
+    site touches, for the map.
+    """
     if not plan.screenable:
         return {
             "level": None, "may_escalate_to": None, "reasons": [], "context": None,
+            "parts": [], "features": [],
             "status": NOT_SCREENED,
             "detail": "This site is outside the area the data covers, so it can't be screened.",
             "outside": None,
         }
     if plan.kind == "line":
         return _screen_line(plan, intake)
+    return _screen_area(plan, intake)
 
-    score = score_site(check_site(plan.footprint), intake)
-    result = {k: score[k] for k in ("level", "may_escalate_to", "reasons", "context")}
+
+def _summary(parts: list[dict], scores: list[dict]) -> dict:
+    """Site-level level, escalation, reasons and context from its parts."""
+    levels = load_rules()["levels"]
+    level = max((p["level"] for p in parts), key=levels.index)
+    top = [p["may_escalate_to"] for p in parts if p["level"] == level and p["may_escalate_to"]]
+    return {
+        "level": level,
+        "may_escalate_to": max(top, key=levels.index) if top else None,
+        "context": _merged_context(scores),
+        "features": _features(parts),
+    }
+
+
+# ---- lines
+
+
+def _screen_line(plan: Plan, intake: dict) -> dict:
+    cfg = settings()
+    scored = []
+    for section in plan.sections:
+        footprint = section.line.buffer(cfg["line_corridor_m"]).intersection(plan.aoi)
+        facts = check_site(footprint)
+        facts["site_area_ha"] = plan.route_area_ha  # area rules use the whole route, not one section
+        scored.append((section, score_site(facts, intake)))
+
+    stretches = _merge_sections(scored)
+    outside = None
+    if plan.outside is not None and plan.outside_size >= MIN_OUTSIDE_M:
+        outside = {
+            "length_km": round(plan.outside_size / 1000, 3),
+            "geometry": to_lat_long(plan.outside),
+            "warning": f"{format_length(plan.outside_size)} of this route is outside the screened area "
+                       "and has not been checked.",
+        }
+    return {
+        **_summary(stretches, [score for _, score in scored]),
+        "reasons": _site_reasons(stretches, where=True),
+        "length_km": round(plan.geometry.length / 1000, 3),
+        "corridor_m": cfg["line_corridor_m"],
+        "parts": stretches,
+        "outside": outside,
+    }
+
+
+def _part_key(score: dict) -> tuple:
+    """Neighbouring sections or pieces with the same level merge into one part."""
+    return (score["level"], score["may_escalate_to"])
+
+
+def _merge_sections(scored: list[tuple[Section, dict]]) -> list[dict]:
+    """Join neighbouring sections with the same level into stretches."""
+    groups: list[dict] = []
+    for section, score in scored:
+        key = _part_key(score)
+        last = groups[-1] if groups else None
+        if last and last["key"] == key and last["piece"] == section.piece and abs(last["end"] - section.start_m) < 0.01:
+            last["end"] = section.end_m
+            last["sections"].append((section, score))
+            continue
+        groups.append({"key": key, "piece": section.piece, "start": section.start_m, "end": section.end_m,
+                       "sections": [(section, score)]})
+    stretches = []
+    for g in groups:
+        lines = [section.line for section, _ in g["sections"]]
+        scores = [score for _, score in g["sections"]]
+        pseudo = [
+            {"start_km": round(section.start_m / 1000, 3), "end_km": round(section.end_m / 1000, 3),
+             "level": score["level"], "reasons": score["reasons"]}
+            for section, score in g["sections"]
+        ]
+        stretches.append({
+            "start_km": round(g["start"] / 1000, 3),
+            "end_km": round(g["end"] / 1000, 3),
+            "level": scores[0]["level"],
+            "may_escalate_to": scores[0]["may_escalate_to"],
+            "reasons": _site_reasons(pseudo, where=True),
+            "context": _merged_context(scores),
+            "geometry": to_lat_long(linemerge(lines) if len(lines) > 1 else lines[0]),
+        })
+    return stretches
+
+
+# ---- points and areas
+
+
+# Pieces are scored using a slightly shrunk copy, so a piece that only
+# touches a feature along its edge isn't counted as overlapping it.
+PROBE_INSET_M = 0.05
+MAX_AREA_PIECES = 400  # beyond this, score the area as one piece
+MIN_PIECE_M2 = 1
+
+
+def _screen_area(plan: Plan, intake: dict) -> dict:
+    footprint = plan.footprint
+    total_ha = footprint.area / 10_000
+    scored = []
+    for piece in _split_area(footprint):
+        probe = piece.buffer(-PROBE_INSET_M)
+        facts = check_site(probe if not probe.is_empty else piece)
+        facts["site_area_ha"] = total_ha  # area rules use the whole site, not one piece
+        scored.append((piece, score_site(facts, intake)))
+
+    groups: dict[tuple, dict] = {}
+    for piece, score in scored:
+        group = groups.setdefault(_part_key(score), {"pieces": [], "scores": []})
+        group["pieces"].append(piece)
+        group["scores"].append(score)
+    levels = load_rules()["levels"]
+    parts = []
+    for (level, may_escalate_to), group in groups.items():
+        geom = _polygonal(shapely.union_all(group["pieces"]))
+        parts.append({
+            "area_ha": round(geom.area / 10_000, 4),
+            "share": round(geom.area / footprint.area, 4) if footprint.area else 1.0,
+            "level": level,
+            "may_escalate_to": may_escalate_to,
+            "reasons": _site_reasons([{"level": level, "reasons": s["reasons"]} for s in group["scores"]], where=False),
+            "context": _merged_context(group["scores"]),
+            "geometry": to_lat_long(geom),
+        })
+    parts.sort(key=lambda p: (-levels.index(p["level"]), -p["area_ha"]))
+
+    result = {
+        **_summary(parts, [score for _, score in scored]),
+        "reasons": _site_reasons(parts, where=False),
+        "area_ha": round(total_ha, 4),
+        "parts": parts,
+        "outside": _outside_area(plan),
+    }
     if plan.kind == "point":
         result["buffer_m"] = settings()["point_buffer_m"]
-    result["outside"] = _outside_area(plan)
     return result
+
+
+def _split_area(area: BaseGeometry) -> list[BaseGeometry]:
+    """Cut an area along the edges of every protected feature it overlaps."""
+    layers = load_layers()
+    aw_buffer = next(r for r in load_rules()["rules"] if r["check"] == "near_ancient_woodland")["buffer_m"]
+    cutters = []
+    for name in ("european", "sssi", "priority_habitat", "irz"):
+        gdf = layers[name]
+        cutters += list(gdf.geometry.values[gdf.sindex.query(area, predicate="intersects")])
+    woods = layers["ancient_woodland"]
+    idx = woods.sindex.query(area, predicate="dwithin", distance=aw_buffer)
+    cutters += [g.buffer(aw_buffer) for g in woods.geometry.values[idx]]
+
+    pieces = [area]
+    for cutter in cutters:
+        next_pieces = []
+        for piece in pieces:
+            if not piece.intersects(cutter) or piece.within(cutter):
+                next_pieces.append(piece)
+                continue
+            for part in (piece.intersection(cutter), piece.difference(cutter)):
+                part = _polygonal(part)
+                if part.area >= MIN_PIECE_M2:
+                    next_pieces.append(part)
+        pieces = next_pieces
+        if len(pieces) > MAX_AREA_PIECES:
+            return [area]
+    return pieces
 
 
 def _outside_area(plan: Plan) -> dict | None:
@@ -235,96 +400,36 @@ def _outside_area(plan: Plan) -> dict | None:
     return {"area_ha": round(plan.outside_size / 10_000, 4), "geometry": to_lat_long(plan.outside), "warning": warning}
 
 
-def _screen_line(plan: Plan, intake: dict) -> dict:
-    cfg = settings()
-    levels = load_rules()["levels"]
-
-    scored = []
-    for section in plan.sections:
-        footprint = section.line.buffer(cfg["line_corridor_m"]).intersection(plan.aoi)
-        facts = check_site(footprint)
-        facts["site_area_ha"] = plan.route_area_ha  # area rules use the whole route, not one section
-        scored.append((section, score_site(facts, intake)))
-
-    stretches = _merge(scored)
-    level = max((s["level"] for s in stretches), key=levels.index)
-    top = [s["may_escalate_to"] for s in stretches if s["level"] == level and s["may_escalate_to"]]
-
-    outside = None
-    if plan.outside is not None and plan.outside_size >= MIN_OUTSIDE_M:
-        outside = {
-            "length_km": round(plan.outside_size / 1000, 3),
-            "geometry": to_lat_long(plan.outside),
-            "warning": f"{format_length(plan.outside_size)} of this route is outside the screened area "
-                       "and has not been checked.",
-        }
-
-    return {
-        "level": level,
-        "may_escalate_to": max(top, key=levels.index) if top else None,
-        "reasons": _route_reasons(stretches),
-        "context": _route_context([score for _, score in scored]),
-        "length_km": round(plan.geometry.length / 1000, 3),
-        "corridor_m": cfg["line_corridor_m"],
-        "sections": [{k: v for k, v in s.items() if k != "_key"} for s in stretches],
-        "outside": outside,
-    }
+# ---- combining results
 
 
-def _merge(scored: list[tuple[Section, dict]]) -> list[dict]:
-    """Join neighbouring sections whose level and reasons match."""
-    stretches: list[dict] = []
-    lines: list[list[LineString]] = []
-    for section, score in scored:
-        key = (score["level"], score["may_escalate_to"],
-               frozenset((r["rule"], r["layer"], r["value"]) for r in score["reasons"]))
-        last = stretches[-1] if stretches else None
-        if last and last["_key"] == key and last["_piece"] == section.piece and abs(last["_end"] - section.start_m) < 0.01:
-            last["_end"] = section.end_m
-            lines[-1].append(section.line)
-            continue
-        stretches.append({
-            "_key": key, "_piece": section.piece, "_start": section.start_m, "_end": section.end_m,
-            "level": score["level"], "may_escalate_to": score["may_escalate_to"],
-            "reasons": score["reasons"], "context": score["context"],
-        })
-        lines.append([section.line])
-
-    out = []
-    for stretch, parts in zip(stretches, lines):
-        merged = linemerge(parts) if len(parts) > 1 else parts[0]
-        out.append({
-            "_key": stretch["_key"],
-            "start_km": round(stretch["_start"] / 1000, 3),
-            "end_km": round(stretch["_end"] / 1000, 3),
-            "level": stretch["level"],
-            "may_escalate_to": stretch["may_escalate_to"],
-            "reasons": stretch["reasons"],
-            "context": stretch["context"],
-            "geometry": to_lat_long(merged),
-        })
-    return out
-
-
-def _route_reasons(stretches: list[dict]) -> list[dict]:
-    """Every reason on the route once, with where along the route it applies."""
+def _site_reasons(parts: list[dict], where: bool) -> list[dict]:
+    """Every reason on the site once. For routes, says where along it each applies."""
     found: dict[tuple, dict] = {}
-    for s in stretches:
-        for r in s["reasons"]:
+    for part in parts:
+        for r in part["reasons"]:
             key = (r["rule"], r["layer"], r["value"])
-            entry = found.setdefault(key, {**r, "ranges_km": []})
-            ranges = entry["ranges_km"]
-            if ranges and abs(ranges[-1][1] - s["start_km"]) < 0.0005:
-                ranges[-1][1] = s["end_km"]  # extend a continuous run
-            else:
-                ranges.append([s["start_km"], s["end_km"]])
-    reasons = sorted(found.values(), key=lambda r: (r["rule"], r["ranges_km"][0][0]))
+            entry = found.setdefault(key, {**r, "refs": [], "ranges_km": []})
+            entry["refs"] = sorted(set(entry["refs"]) | set(r.get("refs", [])))
+            if where:
+                ranges = entry["ranges_km"]
+                if ranges and abs(ranges[-1][1] - part["start_km"]) < 0.0005:
+                    ranges[-1][1] = part["end_km"]  # extend a continuous run
+                else:
+                    ranges.append([part["start_km"], part["end_km"]])
+    reasons = list(found.values())
+    # "Nothing found" only describes the site if nothing else was found.
+    if any(r["rule"] != 8 for r in reasons):
+        reasons = [r for r in reasons if r["rule"] != 8]
     for r in reasons:
-        r["where"] = ", ".join(f"{a:.2f}–{b:.2f} km" for a, b in r["ranges_km"])
-    return reasons
+        if where:
+            r["where"] = ", ".join(f"{a:.2f}–{b:.2f} km" for a, b in r["ranges_km"])
+        else:
+            del r["ranges_km"]
+    return sorted(reasons, key=lambda r: (r["rule"], r.get("ranges_km", [[0]])[0][0]))
 
 
-def _route_context(scores: list[dict]) -> dict:
+def _merged_context(scores: list[dict]) -> dict:
     units = [s["context"]["sssi_condition"] for s in scores if s["context"]["sssi_condition"]]
     linked = {}
     for s in scores:
@@ -335,6 +440,52 @@ def _route_context(scores: list[dict]) -> dict:
         "european_site_linkage": list(linked.values()),
         "direction_of_effect": None,
     }
+
+
+# ---- the protected areas and risk zones a site touches
+
+FEATURE_SIMPLIFY_M = {"european": 10, "sssi": 10, "ancient_woodland": 3, "priority_habitat": 3, "irz": 20}
+
+
+def _features(parts: list[dict]) -> list[dict]:
+    """The map features behind a site's reasons, each with the highest level it causes."""
+    levels = load_rules()["levels"]
+    found: dict[str, dict] = {}
+    for part in parts:
+        for r in part["reasons"]:
+            for ref in r.get("refs", []):
+                entry = found.setdefault(ref, {"level": part["level"], "rules": set()})
+                if levels.index(part["level"]) > levels.index(entry["level"]):
+                    entry["level"] = part["level"]
+                entry["rules"].add(r["rule"])
+
+    layers = load_layers()
+    features = []
+    for ref, entry in found.items():
+        layer, index = ref.split(":")
+        row = layers[layer].loc[int(index)]
+        feature = {"ref": ref, "level": entry["level"], "rules": sorted(entry["rules"])}
+        if layer == "european":
+            feature |= {"kind": row["designation"].lower(), "name": row["site"], "code": row["site_code"]}
+        elif layer == "sssi":
+            feature |= {"kind": "sssi", "name": row["name"]}
+        elif layer == "ancient_woodland":
+            feature |= {"kind": "ancient_woodland", "name": _text(row["name"]), "status": row["status"]}
+        elif layer == "priority_habitat":
+            feature |= {"kind": "priority_habitat", "name": row["mainhabs"]}
+        else:
+            feature |= {"kind": "risk_zone", "name": "SSSI Impact Risk Zone", "irzcode": row["irzcode"],
+                        "european_sites": list(row["european_sites"])}
+        simplified = row.geometry.simplify(FEATURE_SIMPLIFY_M[layer], preserve_topology=True)
+        feature["geometry"] = to_lat_long(simplified)
+        features.append(feature)
+    # Draw big, general features first so smaller ones sit on top.
+    order = {"risk_zone": 0, "sac": 1, "spa": 1, "ramsar": 1, "sssi": 2, "priority_habitat": 3, "ancient_woodland": 4}
+    return sorted(features, key=lambda f: order[f["kind"]])
+
+
+def _text(value) -> str | None:
+    return None if value is None or (isinstance(value, float) and value != value) or str(value).strip() == "" else str(value)
 
 
 # ------------------------------------------------------------- formatting

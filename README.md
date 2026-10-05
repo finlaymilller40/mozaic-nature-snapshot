@@ -13,30 +13,43 @@ It's indicative screening from public data, not a regulatory decision.
 
 ## How it works
 
-1. **Describe the work** in the chat, or fill in a five-question form. The
-   AI (Claude Sonnet 5.5) asks for the type of work and four yes/no
-   questions. It never suggests a level.
-2. **Say where it is**, in one of three ways:
-   - give a **postcode** in the chat: a pin appears to check, drag and
-     confirm (postcode-level accuracy);
-   - **draw** points, lines (pipelines) or outlines on the map;
-   - **upload or paste coordinates** (CSV or GeoJSON). This gives the most
-     accurate results.
+1. **Describe the project**, either by chatting with the assistant or by
+   filling in a short form. The assistant talks through the project in your
+   terms, works out what it can from your description and checks it with
+   you. Either way, you then choose how to show where the work is:
+   - **upload or paste coordinates** (most accurate);
+   - give a **postcode**: a pin appears on a map to check and drag;
+   - **draw it** in a map pop-up. The shape follows the type of work: a
+     route for pipes, a point for outfalls, an area for works.
 
-   For storm overflow work, you can also pick from the 461 Anglian Water
-   storm overflows on the map, or use them all.
-3. **Confirm**, and each site is screened:
-   - points are checked as a 50 m circle;
-   - polygons are checked as drawn;
-   - pipelines are checked as a corridor 15 m either side, in 50 m
-     sections. Each stretch is coloured by its level, and the route's level
-     is its highest section;
-   - anything outside the screened area is shown grey and dashed, with a
-     warning saying how much wasn't checked.
+   If the chat isn't available, the page switches to the form.
+2. **See the results** on a full-screen map with a summary alongside:
+   - the work is drawn in parts coloured by level: a pipe's stretches from
+     A to B, or the parts of a site that overlap different protected areas;
+   - the protected areas and Natural England risk zones it touches are
+     shown dimly, each with a box explaining what it is and why it matters;
+   - the summary lists every part with its level and reason, says what
+     each level means, and explains why A1 parts only need a desk check;
+   - anything outside the screened area is grey and dashed, with a warning.
+3. **Let the AI explain it.** Two tabs next to the map:
+   - **Report:** Claude writes a short report from the results (what was
+     found, where, why it matters, next steps), checked against the
+     screening so it can't invent sites or levels. Downloadable.
+   - **Ask:** a results assistant that answers questions like "Which stretch
+     is the problem?", "What if we didn't need to pump out groundwater?" or
+     "How far is the nearest SSSI?" by calling the screening code as tools.
+     Parts it mentions are links that highlight them on the map.
+
+| Level | What to do |
+|---|---|
+| A1 | Nothing found. A desk check to confirm is enough. |
+| A2 | An ecologist should review it from records. |
+| A3 | Specialist assessment needed, likely with Natural England input. |
+| A4 | Specialist assessment plus a site survey. |
 
 The rules (levels, buffers, which risk-zone values trigger for each work
-type) are in [`app/rules.yaml`](app/rules.yaml). The reasoning behind each
-choice is in [`DECISIONS.md`](DECISIONS.md).
+type, the shape to draw for each) are in [`app/rules.yaml`](app/rules.yaml).
+The reasoning behind each choice is in [`DECISIONS.md`](DECISIONS.md).
 
 ## Running it
 
@@ -114,11 +127,11 @@ rejected, with the reason for each row.
 
 | Endpoint | What it does |
 |---|---|
-| `POST /intake` | `{history, sites_placed}` → the next chat turn: a question, or a summary to confirm |
-| `POST /snapshot` | intake + sites as GeoJSON (`crs` `EPSG:4326` or `EPSG:27700`) → each site's level, reasons, sections and warnings, plus counts per level |
+| `POST /intake` | `{history, sites_placed}` → the next chat turn: a question (with any answers so far, how the user wants to give the location, and postcodes to look up), or a summary to confirm |
+| `POST /snapshot` | intake + sites as GeoJSON (`crs` `EPSG:4326` or `EPSG:27700`) → each site's level, its parts (each with level and reasons), the protected features it touches with outlines, and warnings, plus counts per level |
+| `POST /report` | the `/snapshot` request → an AI-written report, checked against the results |
+| `POST /ask` | the `/snapshot` request + `history` → the results assistant's answer and the parts it cites |
 | `GET /geocode?postcode=` | a UK postcode or district → a point to confirm (postcodes.io) |
-| `GET /layers/{protected,irz}` | background map layers |
-| `GET /sites/examples` | the 461 Anglian Water storm overflows |
 
 ## Data
 
@@ -129,8 +142,8 @@ All public data, clipped to the screened area (British National Grid
   Priority Habitat Inventory and the Ancient Woodland Inventory: © Natural
   England copyright. Contains Ordnance Survey data © Crown copyright and
   database right 2026.
-- Storm overflows: EDM 2025 Storm Overflow Annual Return, © Environment
-  Agency copyright and/or database right 2026.
+- Storm overflows (used as a test set): EDM 2025 Storm Overflow Annual
+  Return, © Environment Agency copyright and/or database right 2026.
 - Postcode lookups: postcodes.io (Ordnance Survey and ONS data).
 - Map tiles: © OpenStreetMap contributors.
 
@@ -152,5 +165,4 @@ All public data, clipped to the screened area (British National Grid
   free OS Data Hub key. Today only postcodes are looked up.
 - More accurate coordinate conversion using the OSTN15 grid shift (to
   centimetres rather than a few metres).
-- Vector tiles for the risk-zone layer instead of simplified GeoJSON.
 - Per-site intake answers, and more work types (e.g. reservoirs).
