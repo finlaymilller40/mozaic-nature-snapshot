@@ -1,8 +1,10 @@
 # Nature Exposure Snapshot
 
-A first check of whether planned water company work could affect protected nature in England. This prototype covers Cambridgeshire and Peterborough.
+Before a water company lays a new sewer or upgrades a storm overflow, someone has to ask: could this affect protected nature, and how much assessment will it need?
 
-A project team describes their work and shows where it is. The tool screens each part against public Natural England data, assigns an indicative assurance level from A1 to A4, and explains why. AI then helps the user understand and explore the results.
+Nature Exposure Snapshot gives a first answer in seconds. A project team describes the work and marks where it is on a map. The tool checks every stretch against Natural England's protected sites, habitats and risk zones, shows which parts need further assessment and why, and an AI assistant helps them understand the results and plan next steps.
+
+This prototype covers Cambridgeshire and Peterborough. It is indicative screening from public data, not a regulatory decision.
 
 **Indicative screening from public data, not a regulatory decision.**
 
