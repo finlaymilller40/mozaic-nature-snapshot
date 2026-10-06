@@ -589,7 +589,7 @@ docs/
 scripts/
   make_aoi.py           builds data/aoi/
   prepare_data.py       builds data/clean/ from data/raw/
-tests/            121 tests
+tests/            128 tests
 DECISIONS.md      every design decision, dated, with the reasoning
 ```
 
@@ -609,7 +609,7 @@ Shapely, pyproj, and the Anthropic and Google GenAI SDKs (full list in
 .venv/bin/python -m pytest
 ```
 
-121 tests in five files. They don't call the AI or postcodes.io (both are
+128 tests in five files. They don't call the AI or postcodes.io (both are
 faked), so no key or internet connection is needed. Tests that need
 `data/clean/` are skipped if it hasn't been built.
 

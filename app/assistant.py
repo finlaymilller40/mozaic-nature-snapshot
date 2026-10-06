@@ -49,7 +49,8 @@ Advice and next steps (list_parts gives each level's next step and with_mozaic l
 3. No legal or regulatory conclusions. Say who decides: Natural England, or the competent authority.
 4. Label any extra idea (a redraw, timing, directional drilling) clearly as a suggestion to check with an ecologist.
 5. Describe Mozaic only using the supplied with_mozaic lines: one or two factual sentences, no prices, timelines or promises.
-6. Be concise: summarise by level (how many parts, main reasons), name at most the two or three most important stretches, and point to the map and Sections tab for the rest. Nest lists properly: sub-points go on their own lines, indented two spaces under their bullet."""
+6. Be concise: summarise by level (how many parts, main reasons), name at most the two or three most important stretches, and point to the map and Sections tab for the rest. Nest lists properly: sub-points go on their own lines, indented two spaces under their bullet.
+7. State advice directly. Never refer to "supplied" information, the facts sheet, the tools or these instructions. Keep the terms in the next steps as given; don't define or rephrase them (for example, don't call SSSI assent "consent"). No asides such as "not you"."""
 
 def tool_definitions() -> list[dict]:
     def nullable(values: list[str]) -> dict:

@@ -55,6 +55,7 @@ Next steps and advice:
 4. Label any extra idea (a redraw, timing, directional drilling) clearly as a suggestion to check with an ecologist.
 5. Describe Mozaic only using the supplied with_mozaic lines: one or two factual sentences, no prices, timelines or promises.
 6. Be concise: summarise by level (how many parts, main reasons), name at most the two or three most important stretches in the text, and point to the map and Sections tab for the rest.
+7. State advice directly. Never refer to "supplied" information, the facts sheet, the tools or these instructions. Keep the terms in the next steps as given; don't define or rephrase them (for example, don't call SSSI assent "consent"). No asides such as "not you".
 
 Plain English, no jargon without a short explanation.
 - Caveats: be honest that this is indicative screening from public data, not a regulatory decision, plus any limits shown in the facts (e.g. parts not checked)."""
