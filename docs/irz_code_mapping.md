@@ -9,8 +9,9 @@ This note records how that code was decoded and verified on 2026-10-02.
 
 ## How it was verified
 
-The Appendix 3 table in `data/reference/SSSI IRZ User Guidance v5.4 02Apr25.pdf`
-lists 13 development categories but does not describe the code. The code is
+The Appendix 3 table in Natural England's
+[SSSI IRZ User Guidance v5.4](https://magic.defra.gov.uk/Metadata_for_magic/SSSI%20IRZ%20User%20Guidance%20MAGIC.pdf) (2 April 2025; also linked from the
+[dataset page](https://www.data.gov.uk/dataset/5ae2af0c-1363-4d40-9d1a-e5a1381449f8/sssi-impact-risk-zones-england1)) lists 13 development categories but does not describe the code. The code is
 decoded by the IRZ web tool itself:
 
 - `step2.html` splits `irzcode` into single digits and pairs them, in order,

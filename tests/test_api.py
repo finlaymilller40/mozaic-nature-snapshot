@@ -134,7 +134,7 @@ def test_snapshot_of_all_examples_matches_trial(client, examples):
     response = client.post("/snapshot", json={"intake": INTAKE, "sites": examples})
     assert response.status_code == 200
     body = response.json()
-    # Same counts as scripts/trial_storm_overflows.py with beyond_site = no.
+    # Regression counts for all 461 storm overflows with every answer no.
     assert body["summary"]["counts"] == {"A1": 126, "A2": 307, "A3": 28, "A4": 0, "not_screened": 0}
     site = body["features"][0]
     assert site["properties"]["kind"] == "point" and site["properties"]["buffer_m"] == 50

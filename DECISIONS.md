@@ -32,7 +32,8 @@ mean fewer developments trigger consultation.
 **Why:** The download has no per-category columns, only the code inside
 `irzurl`. The digit order and value meanings were confirmed from the IRZ web
 tool's own code and its advice templates, and they match the category order
-in Appendix 3 of the IRZ User Guidance. Details and worked examples are in
+in Appendix 3 of the
+[IRZ User Guidance](https://magic.defra.gov.uk/Metadata_for_magic/SSSI%20IRZ%20User%20Guidance%20MAGIC.pdf). Details and worked examples are in
 `docs/irz_code_mapping.md`.
 
 **Caveat:** The value meanings are taken from the live templates on
