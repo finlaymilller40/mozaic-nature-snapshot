@@ -11,12 +11,11 @@ Run locally with:  .venv/bin/uvicorn app.main:app --reload
 """
 
 import json
-import os
 import re
 import secrets
 import threading
 from collections import defaultdict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -30,7 +29,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import assistant, report
+from app import assistant, llm, report
 from app.intake import FULL_POSTCODE, POSTCODE_DISTRICT, next_turn
 from app.llm import LLMError
 from app.scoring import ROOT, load_layers, load_rules, validate_intake
@@ -42,10 +41,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 POSTCODES_IO = "https://api.postcodes.io"
 
-# Each browser session may send at most this many chat messages to the AI.
-# Sessions are identified by a random cookie; counts are kept in memory, so
-# they reset when the server restarts.
-INTAKE_MESSAGE_CAP = int(os.environ.get("INTAKE_MESSAGE_CAP", "20"))
+# Each browser session may send at most this many messages to the AI (chat,
+# report and assistant together). Only calls that succeed count. Sessions are
+# identified by a random cookie; counts are kept in memory, so they reset
+# when the server restarts.
+INTAKE_MESSAGE_CAP = int(llm.setting("INTAKE_MESSAGE_CAP", "20"))
 SESSION_COOKIE = "snapshot_session"
 _session_counts: defaultdict[str, int] = defaultdict(int)
 _session_lock = threading.Lock()
@@ -106,34 +106,54 @@ def intake(body: IntakeRequest, request: Request, response: Response) -> dict:
     if not history or history[0].role != "user":
         raise HTTPException(422, "history must start with the user's description of the work")
 
-    cookie = _use_message(request, response, sum(m.role == "user" for m in history))
+    session, cookie = _session(request, response)
     try:
-        return next_turn([m.model_dump() for m in history], sites_placed=body.sites_placed)
+        with _ai_message(session, cookie, sum(m.role == "user" for m in history)):
+            return next_turn([m.model_dump() for m in history], sites_placed=body.sites_placed)
     except LLMError as exc:
         raise HTTPException(503, f"Intake assistant unavailable: {exc}", headers=cookie) from None
 
 
-def _use_message(request: Request, response: Response, user_messages: int = 0) -> dict:
-    """Count one AI request against this browser session's cap.
+class CapReached(HTTPException):
+    """This browser session has used all its AI messages."""
 
-    Returns the session cookie header, for error responses (which don't
-    include cookies set on `response`). Raises 429 past the cap.
+
+def _session(request: Request, response: Response) -> tuple[str, dict]:
+    """This browser session's id, setting its cookie if it's new.
+
+    Also returns the cookie header, for error responses (which don't include
+    cookies set on `response`).
     """
     session = request.cookies.get(SESSION_COOKIE) or secrets.token_urlsafe(16)
     response.set_cookie(SESSION_COOKIE, session, httponly=True, samesite="lax")
-    cookie = {"set-cookie": response.headers["set-cookie"]}
+    return session, {"set-cookie": response.headers["set-cookie"]}
+
+
+@contextmanager
+def _ai_message(session: str, cookie: dict, user_messages: int = 0):
+    """Count one AI request against the session's cap, if it succeeds.
+
+    The message is reserved before the call, so requests sent at the same
+    time can't pass the cap, and given back if the call fails. Raises
+    CapReached (429) past the cap.
+    """
     with _session_lock:
         over_cap = _session_counts[session] >= INTAKE_MESSAGE_CAP or user_messages > INTAKE_MESSAGE_CAP
         if not over_cap:
             _session_counts[session] += 1
     if over_cap:
-        raise HTTPException(
+        raise CapReached(
             429,
             f"This session has reached its limit of {INTAKE_MESSAGE_CAP} AI messages. "
             "The screening results still work; the AI features don't.",
             headers=cookie,
         )
-    return cookie
+    try:
+        yield
+    except BaseException:
+        with _session_lock:
+            _session_counts[session] -= 1
+        raise
 
 
 @app.post("/snapshot")
@@ -152,11 +172,13 @@ def write_report(body: SnapshotRequest, request: Request, response: Response) ->
         result = screen_project(read_project(body.sites, body.crs, state["aoi"]), body.intake)
     except (ValueError, ScreeningError) as exc:
         raise HTTPException(422, str(exc)) from None
-    cookie = _use_message(request, response)
+    session, cookie = _session(request, response)
     try:
-        return report.generate_report(result, body.intake)
-    except LLMError as exc:
-        raise HTTPException(503, f"The report writer is unavailable: {exc}", headers=cookie) from None
+        with _ai_message(session, cookie):
+            return report.generate_report(result, body.intake)
+    except (LLMError, CapReached):
+        # No AI (no key, an outage or the session cap): the report built from the facts.
+        return report.facts_report(result, body.intake)
 
 
 class AskRequest(SnapshotRequest):
@@ -172,9 +194,10 @@ def ask(body: AskRequest, request: Request, response: Response) -> dict:
         project = read_project(body.sites, body.crs, state["aoi"])
     except (ValueError, ScreeningError) as exc:
         raise HTTPException(422, str(exc)) from None
-    cookie = _use_message(request, response)
+    session, cookie = _session(request, response)
     try:
-        return assistant.answer(project, body.intake, [m.model_dump() for m in body.history])
+        with _ai_message(session, cookie):
+            return assistant.answer(project, body.intake, [m.model_dump() for m in body.history])
     except LLMError as exc:
         raise HTTPException(503, f"The assistant is unavailable: {exc}", headers=cookie) from None
 
@@ -235,6 +258,8 @@ def _index_html() -> str:
         "ancient_woodland_buffer_m": next(r for r in rules["rules"] if r["check"] == "near_ancient_woodland")["buffer_m"],
         # The screened area's outline, so the map can show it.
         "aoi": to_lat_long(state["aoi"].segmentize(1_000)),
+        # Which AI features have a provider and key, so the page can offer the right ones.
+        "ai": llm.available(),
     }
     # Escape "</" so the JSON can't close its <script> tag.
     payload = json.dumps(config).replace("</", "<\\/")

@@ -3,7 +3,8 @@
 The provider comes from LLM_PROVIDER in .env:
   claude (default)  model claude-sonnet-5-5,   key ANTHROPIC_API_KEY
   gemini            model gemini-flash-latest, key GEMINI_API_KEY
-LLM_MODEL overrides the model for either provider.
+LLM_MODEL overrides the model for either provider. Empty settings count as
+not set, so a copy of .env.example works unchanged (with the AI unavailable).
 
 Keys are read on the server from .env and never sent to the browser,
 printed or logged; error messages have them removed.
@@ -35,15 +36,45 @@ class LLMError(RuntimeError):
     """A provider call failed. The message never contains an API key."""
 
 
+def setting(name: str, default: str = "") -> str:
+    """A setting from the environment or .env; empty counts as not set."""
+    return os.environ.get(name, "").strip() or default
+
+
 def provider() -> str:
-    name = os.environ.get("LLM_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+    name = setting("LLM_PROVIDER", DEFAULT_PROVIDER).lower()
     if name not in DEFAULT_MODELS:
         raise LLMError(f"LLM_PROVIDER must be one of {sorted(DEFAULT_MODELS)}, got {name!r}")
     return name
 
 
 def model() -> str:
-    return os.environ.get("LLM_MODEL", "").strip() or DEFAULT_MODELS[provider()]
+    return setting("LLM_MODEL") or DEFAULT_MODELS[provider()]
+
+
+def has_key(name: str) -> bool:
+    key = setting(KEY_VARS[name])
+    return bool(key) and key != PLACEHOLDER_KEY
+
+
+def available() -> dict[str, bool]:
+    """Which AI features can run with the current settings.
+
+    The chat and the report use the configured provider; the results
+    assistant needs Claude (multi-step tool use).
+    """
+    try:
+        name = provider()
+    except LLMError:
+        return {"chat": False, "report": False, "assistant": False}
+    ready = has_key(name)
+    return {"chat": ready, "report": ready, "assistant": ready and name == "claude"}
+
+
+def _key(name: str) -> str:
+    if not has_key(name):
+        raise LLMError(f"{KEY_VARS[name]} is not set in .env")
+    return setting(KEY_VARS[name])
 
 
 def generate(system: str, history: list[dict], schema: type[T]) -> T:
@@ -52,9 +83,7 @@ def generate(system: str, history: list[dict], schema: type[T]) -> T:
     history is a list of {"role": "user" | "assistant", "content": str}.
     """
     name = provider()
-    key = os.environ.get(KEY_VARS[name], "").strip()
-    if not key or key == PLACEHOLDER_KEY:
-        raise LLMError(f"{KEY_VARS[name]} is not set in .env")
+    key = _key(name)
     call = _gemini if name == "gemini" else _claude
     for attempt in range(1, GEMINI_ATTEMPTS + 1):
         try:
@@ -176,9 +205,7 @@ def run_tools(system: str, messages: list[dict], tools: list[dict], handle) -> s
     """
     if provider() != "claude":
         raise LLMError("The results assistant needs Claude (set LLM_PROVIDER=claude).")
-    key = os.environ.get(KEY_VARS["claude"], "").strip()
-    if not key or key == PLACEHOLDER_KEY:
-        raise LLMError(f"{KEY_VARS['claude']} is not set in .env")
+    key = _key("claude")
     try:
         return _claude_tool_loop(key, system, messages, tools, handle)
     except LLMError:

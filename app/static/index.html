@@ -158,7 +158,8 @@
       </div>
 
       <div id="tab-ask" class="tab-panel" hidden>
-        <p class="small muted">Ask about these results. The assistant looks things up in the screening and can test "what if" changes to your answers.</p>
+        <p id="ask-intro" class="small muted">Ask about these results. The assistant looks things up in the screening and can test "what if" changes to your answers.</p>
+        <p id="ask-unavailable" class="note" hidden>The results assistant needs a Claude API key (ANTHROPIC_API_KEY). The sections, map and report work without it.</p>
         <div id="ask-messages" aria-live="polite"></div>
         <div id="ask-suggestions" class="chips"></div>
         <form id="ask-form" autocomplete="off">

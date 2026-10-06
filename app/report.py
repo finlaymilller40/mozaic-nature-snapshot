@@ -8,7 +8,8 @@ The AI sees only the facts sheet (app/explain.py). Its report is checked:
 every finding must cite real parts (S1.P2), every level it mentions must
 match the parts it cites, and every part above A1 must be covered. If a
 draft fails, the AI gets one retry with the problems listed; after that a
-plain report is built from the facts directly.
+plain report is built from the facts directly. The same facts report is used
+when the AI isn't available at all (see app/main.py).
 """
 
 import json
@@ -52,15 +53,23 @@ Write a report they can act on:
 
 
 def generate_report(result: dict, intake: dict) -> dict:
-    """Write and check the report. Returns the report plus where it came from ("ai" or "facts")."""
+    """Write and check the report. Returns the report plus where it came from ("ai" or "facts").
+
+    Raises LLMError if the AI can't be reached for the first draft.
+    """
     sheet = facts_sheet(result, intake)
     if not any(s["parts"] for s in sheet["sites"]):
         return {**fallback_report(sheet), "source": "facts"}
 
     messages = [{"role": "user", "content": "Facts sheet:\n" + json.dumps(sheet, ensure_ascii=False)}]
     system = SYSTEM
-    for _ in range(2):
-        report = llm.generate(system, messages, Report)
+    for attempt in range(2):
+        try:
+            report = llm.generate(system, messages, Report)
+        except llm.LLMError:
+            if attempt == 0:
+                raise
+            break  # the first draft failed its checks and the retry failed: use the facts
         problems = check_report(report, sheet)
         if not problems:
             return {**report.model_dump(), "source": "ai"}
@@ -97,6 +106,11 @@ def check_report(report: Report, sheet: dict) -> list[str]:
     if wrong:
         problems.append(f"The headline, overview or next steps mention {sorted(wrong)}, which no part has.")
     return problems
+
+
+def facts_report(result: dict, intake: dict) -> dict:
+    """The report built from the facts alone, for when the AI isn't available."""
+    return {**fallback_report(facts_sheet(result, intake)), "source": "facts"}
 
 
 def fallback_report(sheet: dict) -> dict:

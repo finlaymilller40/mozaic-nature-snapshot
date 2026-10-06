@@ -116,3 +116,50 @@ def test_missing_or_placeholder_key_is_an_error(monkeypatch, value):
     monkeypatch.setenv("ANTHROPIC_API_KEY", value)
     with pytest.raises(llm.LLMError, match="ANTHROPIC_API_KEY is not set"):
         llm.generate("system", HISTORY, intake_schema())
+
+
+# ------------------------------------------------- settings and availability
+
+
+def test_empty_settings_count_as_not_set(monkeypatch):
+    # A copy of .env.example has every setting present but empty.
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "INTAKE_MESSAGE_CAP"):
+        monkeypatch.setenv(name, "")
+    assert (llm.provider(), llm.model()) == ("claude", "claude-sonnet-5-5")
+    assert llm.setting("INTAKE_MESSAGE_CAP", "20") == "20"
+    with pytest.raises(llm.LLMError, match="ANTHROPIC_API_KEY is not set"):
+        llm.generate("system", HISTORY, intake_schema())
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"LLM_PROVIDER": "", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": ""}, (False, False, False)),
+    ({"LLM_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""}, (True, True, True)),
+    ({"LLM_PROVIDER": "claude", "ANTHROPIC_API_KEY": "paste-here", "GEMINI_API_KEY": ""}, (False, False, False)),
+    ({"LLM_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": "AI-test"}, (True, True, False)),
+    ({"LLM_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""}, (False, False, False)),
+    ({"LLM_PROVIDER": "openai", "ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""}, (False, False, False)),
+])
+def test_available_needs_a_key_for_the_configured_provider(monkeypatch, env, expected):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    ai = llm.available()
+    assert (ai["chat"], ai["report"], ai["assistant"]) == expected
+
+
+def test_app_starts_with_env_example_values():
+    """Importing the app with every setting empty must not fail (it used to on INTAKE_MESSAGE_CAP)."""
+    import os
+    import subprocess
+    import sys
+
+    from dotenv import dotenv_values
+
+    empty = {name: "" for name in dotenv_values(llm.ROOT / ".env.example")}
+    assert empty and "INTAKE_MESSAGE_CAP" in empty
+    run = subprocess.run(
+        [sys.executable, "-c", "import app.main as m; print(m.INTAKE_MESSAGE_CAP, m.llm.available())"],
+        cwd=llm.ROOT, env=os.environ | empty, capture_output=True, text=True, timeout=120,
+    )
+    assert run.returncode == 0, run.stderr[-500:]
+    assert run.stdout.split()[0] == "20"
+    assert "'chat': False" in run.stdout and "'assistant': False" in run.stdout

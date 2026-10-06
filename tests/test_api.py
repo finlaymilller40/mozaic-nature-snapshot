@@ -101,6 +101,23 @@ def test_intake_message_cap_per_session(client, monkeypatch):
         assert other_browser.post("/intake", json={"history": HISTORY}).status_code == 200
 
 
+def test_only_successful_ai_calls_count_against_the_cap(client, monkeypatch):
+    monkeypatch.setattr(main, "INTAKE_MESSAGE_CAP", 2)
+    monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
+
+    def failing(history, sites_placed=0):
+        raise main.LLMError("ANTHROPIC_API_KEY is not set in .env")
+
+    with TestClient(main.app) as browser:
+        monkeypatch.setattr(main, "next_turn", failing)
+        for _ in range(3):  # more failures than the cap allows
+            assert browser.post("/intake", json={"history": HISTORY}).status_code == 503
+        fake_turn(monkeypatch)
+        assert browser.post("/intake", json={"history": HISTORY}).status_code == 200
+        assert browser.post("/intake", json={"history": HISTORY}).status_code == 200
+        assert browser.post("/intake", json={"history": HISTORY}).status_code == 429
+
+
 def test_intake_rejects_history_longer_than_cap(client, monkeypatch):
     monkeypatch.setattr(main, "INTAKE_MESSAGE_CAP", 2)
     monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
@@ -358,6 +375,30 @@ def test_index_page_has_config_from_rules(client):
     assert "Indicative screening from public data, not a regulatory decision." in response.text
     assert "https://mozaic.earth/contact" in response.text
     assert "Upload coordinates for the most accurate results." in response.text
+
+
+def page_config(client):
+    blob = re.search(r'<script id="config" type="application/json">(.*?)</script>', client.get("/").text, re.S)
+    return json.loads(blob.group(1))
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"LLM_PROVIDER": "", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": ""},
+     {"chat": False, "report": False, "assistant": False}),
+    ({"LLM_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": "AI-test"},
+     {"chat": True, "report": True, "assistant": False}),
+    ({"LLM_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""},
+     {"chat": True, "report": True, "assistant": True}),
+])
+def test_page_says_which_ai_features_are_available(client, monkeypatch, env, expected):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert page_config(client)["ai"] == expected
+    page = client.get("/").text
+    assert "The results assistant needs a Claude API key (ANTHROPIC_API_KEY). " \
+           "The sections, map and report work without it." in page
+    script = client.get("/static/app.js").text
+    assert "if (!AI.assistant)" in script and "if (AI.chat)" in script
 
 
 def test_static_files_are_served(client):

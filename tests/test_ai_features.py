@@ -103,6 +103,29 @@ def test_generate_report_falls_back_to_the_facts(monkeypatch, project):
     assert [f["parts"] for f in result["findings"]] == [["S1.P1"], ["S1.P2"]]
 
 
+def test_generate_report_raises_if_the_ai_is_unavailable(monkeypatch, project):
+    def unavailable(system, history, schema):
+        raise llm.LLMError("ANTHROPIC_API_KEY is not set in .env")
+
+    monkeypatch.setattr(llm, "generate", unavailable)
+    with pytest.raises(llm.LLMError):  # the endpoint turns this into the facts report
+        report.generate_report(screen_project(project, INTAKE), INTAKE)
+
+
+def test_generate_report_uses_the_facts_if_the_retry_fails(monkeypatch, project):
+    calls = []
+
+    def first_draft_then_outage(system, history, schema):
+        calls.append(system)
+        if len(calls) == 1:
+            return good_report(headline="It's all A1.")  # fails its checks
+        raise llm.LLMError("claude request failed")
+
+    monkeypatch.setattr(llm, "generate", first_draft_then_outage)
+    result = report.generate_report(screen_project(project, INTAKE), INTAKE)
+    assert result["source"] == "facts" and len(calls) == 2
+
+
 # ------------------------------------------------------- assistant tools
 
 
@@ -178,6 +201,36 @@ def test_run_tools_needs_claude(monkeypatch):
 
 
 # ------------------------------------------------------------- endpoints
+
+
+@pytest.mark.parametrize("cause", ["no_key", "cap"])
+def test_report_endpoint_returns_the_facts_report_without_ai(monkeypatch, cause):
+    monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
+    if cause == "no_key":
+        monkeypatch.setenv("LLM_PROVIDER", "")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    else:
+        monkeypatch.setattr(main, "INTAKE_MESSAGE_CAP", 0)
+        monkeypatch.setattr(llm, "generate", lambda *a: pytest.fail("the AI shouldn't be called past the cap"))
+    body = {"intake": INTAKE, "crs": "EPSG:27700", "sites": ROUTE}
+    with TestClient(main.app) as c:
+        response = c.post("/report", json=body)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["source"] == "facts"
+        assert result["headline"].startswith("Overall A3")
+        assert [f["parts"] for f in result["findings"]] == [["S1.P1"], ["S1.P2"]]
+    assert sum(main._session_counts.values()) == 0  # nothing counted against the cap
+
+
+def test_ask_without_claude_is_503_and_not_counted(monkeypatch):
+    monkeypatch.setattr(main, "_session_counts", main.defaultdict(int))
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    body = {"intake": INTAKE, "crs": "EPSG:27700", "sites": ROUTE, "history": [{"role": "user", "content": "Q?"}]}
+    with TestClient(main.app) as c:
+        response = c.post("/ask", json=body)
+    assert response.status_code == 503 and "needs Claude" in response.json()["detail"]
+    assert sum(main._session_counts.values()) == 0
 
 
 def test_report_and_ask_endpoints(monkeypatch):

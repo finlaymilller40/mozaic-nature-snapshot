@@ -435,3 +435,29 @@ Routes are checked as a 15 m corridor, so "inside" a site can mean the
 corridor overlaps while the centreline doesn't. The facts sheet and the
 assistant's instructions say so explicitly, after the assistant caught the
 ambiguity itself in testing.
+
+## 2026-10-06: Running without an AI key
+
+**Decision:** The app works fully without an AI key, apart from the AI
+features, and says so up front instead of failing on first use.
+
+- Empty settings in `.env` count as not set, so a copy of `.env.example`
+  works unchanged (`llm.setting`).
+- The server works out which AI features have a provider and key
+  (`llm.available()`) and passes that to the page. With no key for the
+  configured provider, the first screen opens on the form and the chat
+  option is disabled. Without a Claude key, the Ask tab shows a note that
+  the results assistant needs `ANTHROPIC_API_KEY`, in place of the question
+  box.
+- `/report` returns the facts-only report when the AI isn't available (no
+  key, an outage or the session cap), instead of an error.
+- Only AI calls that succeed count against the session cap. A message is
+  reserved before the call, so requests sent at the same time can't pass the
+  cap, and given back if the call fails.
+
+**Why:** Reviewers may not have a Claude key. Before this, copying
+`.env.example` stopped the app from starting, and without a key the chat,
+report and assistant each failed only after the user tried them. Failed
+calls also used up the cap. The results assistant stays Claude only:
+Gemini tool calling would need its own loop, and the free tier's 20
+requests a day would allow only a handful of questions.

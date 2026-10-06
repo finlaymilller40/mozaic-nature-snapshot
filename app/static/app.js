@@ -13,6 +13,7 @@ const CONFIG = JSON.parse(document.getElementById("config").textContent);
 const WORK_TYPES = CONFIG.work_types;
 const MEANINGS = CONFIG.level_meanings;
 const GEOMETRY = CONFIG.site_geometry;
+const AI = CONFIG.ai; // which AI features have a provider and key on the server
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 const COLOUR = { A1: "#2e9e44", A2: "#f0a202", A3: "#d7263d", A4: "#7b2cbf", not_screened: "#9e9e9e" };
@@ -1410,5 +1411,18 @@ async function askQuestion(question) {
   }
 }
 
+// Without an AI key the chat can't run, so start on the form, and the Ask tab
+// says what it needs instead of offering a question box.
+if (!AI.assistant) {
+  for (const id of ["ask-intro", "ask-suggestions", "ask-form"]) $(id).hidden = true;
+  $("ask-unavailable").hidden = false;
+}
+
 updateSitesLine();
-setMode("chat");
+if (AI.chat) {
+  setMode("chat");
+} else {
+  $("mode-chat").disabled = true;
+  $("mode-chat").title = "The chat assistant needs an AI key on the server.";
+  setMode("form", "The chat assistant isn't set up on this server, so please describe your project here.");
+}
