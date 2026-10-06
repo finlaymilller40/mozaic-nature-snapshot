@@ -20,3 +20,6 @@ __pycache__/
 
 # Local handover notes (not committed)
 HANDOVER.md
+
+# Claude Code local settings and preview configuration
+.claude/

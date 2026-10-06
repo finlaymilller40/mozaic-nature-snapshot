@@ -165,7 +165,7 @@ Requires Python 3.11. The prepared data is included, so no data needs downloadin
 ```bash
 git clone https://github.com/finlaymilller40/mozaic-nature-snapshot.git
 cd mozaic-nature-snapshot
-python3 -m venv .venv
+python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
 ```
