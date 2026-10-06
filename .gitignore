@@ -9,6 +9,7 @@ env/
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # macOS
 .DS_Store
@@ -16,3 +17,6 @@ env/
 # Python cache
 __pycache__/
 .pytest_cache/
+
+# Local handover notes (not committed)
+HANDOVER.md
