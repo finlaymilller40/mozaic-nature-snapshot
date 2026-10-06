@@ -1261,15 +1261,28 @@ function refLabel(ref) {
 // Small, safe renderer for AI text: paragraphs, "- " lists, **bold** and
 // [S1.P2] part links. Builds elements; never uses innerHTML.
 function renderAiText(text) {
+  // Paragraphs and bullet lists; a bullet indented two or more spaces is a
+  // sub-point of the bullet above it.
   const box = document.createDocumentFragment();
   let list = null;
+  let sublist = null;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    if (!line) { list = null; continue; }
+    if (!line) { list = sublist = null; continue; }
     const bullet = line.match(/^[-*•]\s+(.*)$/);
-    const target = bullet ? (list ||= box.appendChild(el("ul"))).appendChild(el("li")) : box.appendChild(el("p"));
-    if (!bullet) list = null;
-    appendInline(target, bullet ? bullet[1] : line);
+    if (!bullet) {
+      list = sublist = null;
+      appendInline(box.appendChild(el("p")), line);
+      continue;
+    }
+    let target;
+    if (/^\s{2,}/.test(raw) && list) {
+      target = (sublist ||= list.lastElementChild.appendChild(el("ul"))).appendChild(el("li"));
+    } else {
+      sublist = null;
+      target = (list ||= box.appendChild(el("ul"))).appendChild(el("li"));
+    }
+    appendInline(target, bullet[1]);
   }
   return box;
 }

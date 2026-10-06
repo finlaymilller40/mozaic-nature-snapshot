@@ -15,7 +15,7 @@ from typing import Literal
 from shapely.geometry.base import BaseGeometry
 
 from app import llm
-from app.explain import FEATURE_KINDS, facts_sheet, feature_label, part_levels
+from app.explain import FEATURE_KINDS, facts_sheet, feature_label, level_next_steps, part_levels
 from app.scoring import load_layers, load_rules, validate_intake
 from app.screening import Project, screen_project
 
@@ -41,8 +41,15 @@ How to answer:
 - Mention a level only as the tools report it. To answer "what if…" questions about the answers (dewatering, abstraction, work outside your land, site survey, type of work), use what_if and say clearly what would change.
 - Cite parts in square brackets, like [S1.P1], whenever you talk about a specific part. The app shows each reference as a link with the part's location (e.g. "0.00–0.95 km"), so don't repeat the location next to it.
 - You can't move or redraw the route yourself. If they ask about a re-route, use the tools to say where the problem is and how far the nearest protected features are, and suggest they redraw it and check again.
-- You can suggest practical next steps (e.g. talking to Natural England early), as suggestions, not legal advice.
-- If something isn't in the data, say so."""
+- If something isn't in the data, say so.
+
+Advice and next steps (list_parts gives each level's next step and with_mozaic line, and each part's next steps; get_part gives a part's full set):
+1. Build advice from the supplied next steps. Don't invent new required actions.
+2. Never recommend less than the level requires: no "no further action" for anything at A2 or above.
+3. No legal or regulatory conclusions. Say who decides: Natural England, or the competent authority.
+4. Label any extra idea (a redraw, timing, directional drilling) clearly as a suggestion to check with an ecologist.
+5. Describe Mozaic only using the supplied with_mozaic lines: one or two factual sentences, no prices, timelines or promises.
+6. Be concise: summarise by level (how many parts, main reasons), name at most the two or three most important stretches, and point to the map and Sections tab for the rest. Nest lists properly: sub-points go on their own lines, indented two spaces under their bullet."""
 
 def tool_definitions() -> list[dict]:
     def nullable(values: list[str]) -> dict:
@@ -141,8 +148,10 @@ class Workspace:
                 "site": s["site"], "name": s["name"], "shape": s["shape"], "site_level": s["level"],
                 "how_checked": s.get("how_checked"),
                 **({"not_checked": s["not_checked"]} if s.get("not_checked") else {}),
-                "parts": [{"ref": p["ref"], "where": p["where"], "level": p["level"], "main_reason": p["reasons"][0]}
+                "parts": [{"ref": p["ref"], "where": p["where"], "level": p["level"], "main_reason": p["reasons"][0],
+                           "next_steps": p["next_steps"]}
                           for p in s["parts"]],
+                "next_steps_by_level": level_next_steps((p["level"] for p in s["parts"]), load_rules()),
             }
             for s in sheet["sites"]
         ]
@@ -151,7 +160,9 @@ class Workspace:
         for site in self.sheet["sites"]:
             for part in site["parts"]:
                 if part["ref"] == ref.strip().upper():
-                    return {"site": site["name"], **part}
+                    level = self.sheet["next_steps_by_level"][part["level"]]
+                    return {"site": site["name"], **part, "level_next_step": level["next_step"],
+                            "with_mozaic": level["with_mozaic"]}
         raise ValueError(f"No part {ref}. Use list_parts to see the references.")
 
     def find_feature(self, name: str) -> list[dict]:
@@ -223,7 +234,8 @@ def answer(project: Project, intake: dict, history: list[dict]) -> dict:
     system = SYSTEM
     for _ in range(2):
         text = llm.run_tools(system, history, tools, workspace.handle)
-        wrong = set(LEVEL_TOKEN.findall(text)) - workspace.levels_seen
+        seen = workspace.levels_seen | ({"A3"} if "A4" in workspace.levels_seen else set())  # A4 is "as A3, plus…"
+        wrong = set(LEVEL_TOKEN.findall(text)) - seen
         if not wrong:
             break
         system = SYSTEM + f"\n\nYour last answer mentioned {sorted(wrong)}, which no tool reported. Only state levels the tools give you."

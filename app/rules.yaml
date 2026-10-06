@@ -15,6 +15,23 @@ level_meanings:
   A3: Specialist assessment needed, likely with Natural England input.
   A4: Specialist assessment plus a site survey.
 
+# What to do next at each level, and how Mozaic would help. The code gives
+# these to the AI (facts sheet and assistant tools) and uses them in the
+# facts-only report; the AI explains them but doesn't invent its own.
+level_next_steps:
+  A1:
+    next_step: &a1_next_step Confirm with a desk check; no further screening needed unless the project changes.
+    with_mozaic: Covered by continuous satellite monitoring, with alerts if conditions change.
+  A2:
+    next_step: An ecologist reviews existing records for the feature that triggered it.
+    with_mozaic: A guided field mission, where field staff capture geolocated evidence by phone or drone, analysed by AI, to support that review.
+  A3:
+    next_step: Specialist assessment, likely with Natural England's input before work goes ahead.
+    with_mozaic: Remote verification by an ecologist through Mozaic's platform.
+  A4:
+    next_step: As A3, plus the in-person survey the client requires.
+    with_mozaic: An on-site specialist visit.
+
 # How submitted sites become the areas that get screened (app/sites.py).
 site_geometry:
   point_buffer_m: 50        # points are screened as a circle of this radius
@@ -30,6 +47,8 @@ intake_fields:
   - dewatering
   - physical_survey_required
 
+# Each rule that gives a reason has a next_step for that reason (see
+# level_next_steps above).
 rules:
   - id: 1
     name: European site
@@ -37,6 +56,7 @@ rules:
     check: overlaps_european_site
     level: A3
     may_escalate_to: A4
+    next_step: A Habitats Regulations Assessment is likely to be needed; the competent authority decides.
 
   - id: 2
     name: SSSI
@@ -44,6 +64,7 @@ rules:
     check: overlaps_sssi
     level: A3
     may_escalate_to: A4
+    next_step: Contact Natural England early about SSSI assent.
 
   - id: 3
     name: Ancient woodland
@@ -53,6 +74,7 @@ rules:
     source: Natural England & Forestry Commission standing advice
     level: A3
     may_escalate_to: A4
+    next_step: Check against Natural England and Forestry Commission standing advice (minimum 15 m buffer).
 
   - id: 4
     name: IRZ All Consultations
@@ -61,6 +83,7 @@ rules:
     values: [1, 2]
     level: A3
     may_escalate_to: A4
+    next_step: &risk_zone_next_step Check Natural England's risk-zone advice for this type of work, and whether they should be consulted.
 
   - id: 5
     name: Abstraction or dewatering
@@ -68,7 +91,8 @@ rules:
     check: abstraction_or_dewatering_with_irz_trigger
     level: A3
     may_escalate_to: null
-    note: Groundwater specialist may be needed
+    note: &groundwater_note Groundwater or hydrology specialist may be needed
+    next_step: *groundwater_note
 
   - id: 6
     name: IRZ work-type trigger
@@ -76,6 +100,7 @@ rules:
     check: irz_work_type_trigger
     level: A2
     may_escalate_to: A3
+    next_step: *risk_zone_next_step
 
   - id: 7
     name: Priority habitat
@@ -83,6 +108,7 @@ rules:
     check: overlaps_priority_habitat
     level: A2
     may_escalate_to: A3
+    next_step: Ecologist review; may matter for biodiversity duties and net gain.
 
   - id: 8
     name: Nothing found
@@ -91,6 +117,7 @@ rules:
     level: A1
     may_escalate_to: null
     note: Confirm remotely
+    next_step: *a1_next_step
 
   - id: 9
     name: Complete intake
@@ -103,6 +130,7 @@ rules:
     check: physical_survey_upgrade
     from_level: A3
     to_level: A4
+    next_step: Arrange the in-person survey the client requires.
 
 # Not used to set the level, only reported alongside it.
 context_only:

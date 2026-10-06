@@ -6,8 +6,6 @@ A project team describes their work and shows where it is. The tool screens each
 
 **Indicative screening from public data, not a regulatory decision.**
 
-![Demo](docs/demo.gif)
-
 ## The Idea
 
 Water companies run many projects each year: new sewers and pipelines, storm overflow upgrades, treatment works. Early on, project teams need to know whether proposed work could affect protected nature, and how much further assessment it is likely to need.
@@ -99,6 +97,8 @@ The full code mapping, thresholds, assumptions and data preparation are in [`doc
 
 **Results assistant.** It answers questions such as "Which stretch is the problem?" or "What would change if we didn't need dewatering?". Its tools call the screening engine itself, so a "what if" is re-screened rather than guessed. Any level it states is checked against what the tools returned.
 
+Next steps also come from code. Each level and rule has a fixed next step in rules.yaml, including how Mozaic would handle it, and the AI builds its advice from these rather than inventing its own.
+
 ### Models
 
 | Where | Model | Used for |
@@ -115,7 +115,7 @@ I kept the system coherent through documented decisions, precise instructions an
 - **Decide before building.** I designed each major part in conversation first, recorded the reasoning in `DECISIONS.md`, then gave Claude Code a specific task with checks to run.
 - **Keep rules as data.** Levels, distances and triggers live in `rules.yaml`, not in application code or prompts. The screening logic can be inspected, and the AI layer can change without any screening result changing.
 - **Verify rather than trust.** The agent's first reading of the undocumented risk-zone codes was treated as a hypothesis, and checked against Natural England's own tool before anything was built on it.
-- **Test at each stage.** 121 automated tests run offline, including a regression test on 461 real Anglian Water storm overflow locations.
+- **Test at each stage.** 128 automated tests run offline, including a regression test on 461 real Anglian Water storm overflow locations.
 
 ### What changed during development
 

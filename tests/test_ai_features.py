@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app import assistant, llm, main, report
 from app.explain import facts_sheet
-from app.scoring import CLEAN_DIR, load_layers
+from app.scoring import CLEAN_DIR, load_layers, load_rules
 from app.screening import read_project, screen_project
 
 pytestmark = pytest.mark.skipif(not (CLEAN_DIR / "irz.gpkg").exists(), reason="data/clean/ not built")
@@ -47,6 +47,72 @@ def test_facts_sheet_has_refs_levels_and_plain_reasons(sheet):
     assert first["where"] == "0.00–0.95 km along the route" and first["level"] == "A3"
     assert any("Ouse Washes" in r for r in first["reasons"])
     assert "Ouse Washes SSSI" in first["protected_features"]
+
+
+# Next steps from rules.yaml, by rule id and by level.
+RULE_STEPS = {r["id"]: r.get("next_step") for r in load_rules()["rules"]}
+LEVEL_STEPS = load_rules()["level_next_steps"]
+
+
+def test_facts_sheet_has_next_steps_from_the_rules(sheet):
+    assert sheet["next_steps_by_level"] == {"A3": LEVEL_STEPS["A3"]}
+    first, second = sheet["sites"][0]["parts"]
+    # In rule order, one per kind of reason, the risk-zone step only once.
+    assert first["next_steps"] == [RULE_STEPS[1], RULE_STEPS[2], RULE_STEPS[4], RULE_STEPS[5], RULE_STEPS[7]]
+    assert second["next_steps"] == [RULE_STEPS[5], RULE_STEPS[6]]
+
+
+def test_assistant_tools_give_next_steps(project):
+    w = assistant.Workspace(project, INTAKE)
+    site = w.handle("list_parts", {})[0]
+    assert site["next_steps_by_level"]["A3"]["with_mozaic"] == LEVEL_STEPS["A3"]["with_mozaic"]
+    assert site["parts"][0]["next_steps"][0] == RULE_STEPS[1]
+    part = w.handle("get_part", {"ref": "S1.P2"})
+    assert part["level_next_step"] == LEVEL_STEPS["A3"]["next_step"]
+    assert part["with_mozaic"] == LEVEL_STEPS["A3"]["with_mozaic"]
+    assert part["next_steps"] == [RULE_STEPS[5], RULE_STEPS[6]]
+
+
+def test_facts_report_uses_the_next_steps(project):
+    result = report.facts_report(screen_project(project, INTAKE), INTAKE)
+    first = result["findings"][0]
+    assert first["next_steps"][0] == LEVEL_STEPS["A3"]["next_step"]
+    assert RULE_STEPS[1] in first["next_steps"] and RULE_STEPS[2] in first["next_steps"]
+    assert result["next_steps"] == [
+        f"A3 (2 parts): {LEVEL_STEPS['A3']['next_step']} With Mozaic: {LEVEL_STEPS['A3']['with_mozaic']}"]
+
+
+def test_facts_report_gives_every_level_its_step():
+    from app.explain import level_next_steps
+
+    def part(ref, level):
+        return {"ref": ref, "where": "somewhere", "level": level, "reasons": ["A reason."], "next_steps": []}
+
+    sheet = {
+        "project": {"work_type": "New pipeline / sewer"},
+        "level_meanings": load_rules()["level_meanings"],
+        "next_steps_by_level": level_next_steps(["A1", "A2"], load_rules()),
+        "sites": [{"name": "Route", "parts": [part("S1.P1", "A1"), part("S1.P2", "A2"), part("S1.P3", "A1")]}],
+    }
+    result = report.fallback_report(sheet)
+    a2, quiet = result["findings"]
+    assert a2["next_steps"] == [LEVEL_STEPS["A2"]["next_step"]]
+    assert quiet["parts"] == ["S1.P1", "S1.P3"] and quiet["next_steps"] == [LEVEL_STEPS["A1"]["next_step"]]
+    assert [s.split(" (")[0] for s in result["next_steps"]] == ["A2", "A1"]  # highest level first
+    assert result["next_steps"][1].startswith("A1 (2 parts): ") and LEVEL_STEPS["A1"]["with_mozaic"] in result["next_steps"][1]
+
+
+def test_a4_text_may_mention_a3(sheet):
+    import copy
+
+    a4 = copy.deepcopy(sheet)
+    for p in a4["sites"][0]["parts"]:
+        p["level"], p["may_rise_to"] = "A4", None
+    draft = good_report(
+        headline="Both parts of the route are A4.",
+        findings=[report.Finding(parts=["S1.P1", "S1.P2"], title="Survey needed", explanation="A4.",
+                                 next_steps=["As A3, plus the in-person survey the client requires."])])
+    assert report.check_report(draft, a4) == []
 
 
 # ---------------------------------------------------------------- report

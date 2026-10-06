@@ -4,6 +4,9 @@ The AI never sees raw rule output. It gets a facts sheet built here: every
 part of every site with a reference (S1.P2 = site 1, part 2), where it is,
 its level and reasons in plain words, and the protected features behind it.
 The wording matches what the map shows (app/static/app.js).
+
+Next steps come from app/rules.yaml, not the AI: one per level (with how
+Mozaic would help) and one per kind of reason. The AI explains them.
 """
 
 from app.scoring import load_rules
@@ -74,6 +77,24 @@ def describe_reason(r: dict) -> str:
     return detail
 
 
+def reason_next_steps(reasons: list[dict], rules: dict) -> list[str]:
+    """The next step for each kind of reason in a part, in rule order, without repeats.
+
+    A step that only repeats the part's level step (e.g. "nothing found" at A1)
+    is left out, since the level step is given alongside.
+    """
+    by_id = {r["id"]: r for r in rules["rules"]}
+    level_steps = {s["next_step"] for s in rules["level_next_steps"].values()}
+    steps = (by_id[r["rule"]].get("next_step") for r in sorted(reasons, key=lambda r: r["rule"]))
+    return [s for s in dict.fromkeys(steps) if s and s not in level_steps]
+
+
+def level_next_steps(levels, rules: dict) -> dict:
+    """{level: {next_step, with_mozaic}} for the given levels, lowest first."""
+    present = set(levels)
+    return {lvl: dict(rules["level_next_steps"][lvl]) for lvl in rules["levels"] if lvl in present}
+
+
 def part_where(props: dict, part: dict) -> str:
     if props.get("kind") == "line":
         return f"{part['start_km']:.2f}–{part['end_km']:.2f} km along the route"
@@ -137,6 +158,7 @@ def facts_sheet(result: dict, intake: dict) -> dict:
                     for r in part["reasons"] for ref in r.get("refs", []) if ref in features
                 }),
                 "nearest_sssi_unit": (part.get("context") or {}).get("sssi_condition"),
+                "next_steps": reason_next_steps(part["reasons"], rules),
             }
             for j, part in enumerate(props.get("parts", []))
         ]
@@ -147,6 +169,9 @@ def facts_sheet(result: dict, intake: dict) -> dict:
             "answers": {ANSWER_WORDS[k]: intake[k] for k in ANSWER_WORDS if k in intake},
         },
         "level_meanings": meanings,
+        # What to do at each level found, from rules.yaml. Each part adds its
+        # own next steps for its reasons.
+        "next_steps_by_level": level_next_steps((p["level"] for s in sites for p in s["parts"]), rules),
         "sites": sites,
     }
 

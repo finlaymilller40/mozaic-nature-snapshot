@@ -34,7 +34,18 @@ def load_rules(path: Path = RULES_PATH) -> dict:
     unknown = {r["check"] for r in rules["rules"]} - KNOWN_CHECKS
     if unknown:
         raise ValueError(f"rules.yaml uses checks scoring.py doesn't know: {sorted(unknown)}")
+    _check_next_steps(rules)
     return rules
+
+
+def _check_next_steps(rules: dict) -> None:
+    """Every level, and every rule that gives a reason, must say what to do next."""
+    steps = rules.get("level_next_steps", {})
+    missing = [f"level {lvl}" for lvl in rules["levels"]
+               if not (steps.get(lvl, {}).get("next_step") and steps.get(lvl, {}).get("with_mozaic"))]
+    missing += [f"rule {r['id']}" for r in rules["rules"] if r["check"] != "intake_complete" and not r.get("next_step")]
+    if missing:
+        raise ValueError(f"rules.yaml has no next step for: {', '.join(missing)}")
 
 
 @lru_cache(maxsize=None)

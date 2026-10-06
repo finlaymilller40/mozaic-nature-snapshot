@@ -462,3 +462,49 @@ report and assistant each failed only after the user tried them. Failed
 calls also used up the cap. The results assistant stays Claude only:
 Gemini tool calling would need its own loop, and the free tier's 20
 requests a day would allow only a handful of questions.
+
+## 2026-10-06: Next steps decided by code, explained by the AI
+
+**Decision:** What to do next is now data in `app/rules.yaml`, like the
+levels. The AI explains these next steps but doesn't make up its own. No
+screening rule or level changed.
+
+- `level_next_steps` gives each level a next step and a "with Mozaic" line:
+  A1 a desk check (Mozaic: continuous satellite monitoring with alerts); A2
+  an ecologist reviews existing records (Mozaic: a guided field mission with
+  geolocated phone or drone evidence, analysed by AI); A3 specialist
+  assessment, likely with Natural England's input (Mozaic: remote
+  verification by an ecologist); A4 as A3 plus the required in-person survey
+  (Mozaic: an on-site specialist visit).
+- Each rule that gives a reason has a `next_step`: SSSI assent (rule 2), a
+  Habitats Regulations Assessment decided by the competent authority (rule
+  1), the 15 m ancient woodland standing advice (rule 3), Natural England's
+  risk-zone advice (rules 4 and 6, one shared step), ecologist review for
+  priority habitat (rule 7), and a groundwater or hydrology specialist
+  (rule 5, reusing its note). Rules 8 and 10 reuse the A1 step and ask for
+  the required survey. `load_rules` refuses a rules file with a level or
+  rule missing its next step.
+- The facts sheet gives the AI `next_steps_by_level` for the levels found
+  and each part's `next_steps` (one per kind of reason, in rule order). The
+  assistant's `list_parts` and `get_part` tools return the same. The
+  facts-only report uses them directly, with each level's "with Mozaic"
+  line in the project next steps.
+- The report and assistant instructions now say: build advice from the
+  supplied next steps; never recommend less than the level requires; no
+  legal or regulatory conclusions, and say who decides; label extra ideas
+  (a redraw, timing, directional drilling) as suggestions to check with an
+  ecologist; describe Mozaic only with the supplied lines; and summarise by
+  level, naming at most two or three stretches. This replaces the earlier
+  instruction to draw on general good practice.
+- Because A4 is defined as "as A3, plus a survey", the report and assistant
+  checks now accept A3 being mentioned wherever A4 is.
+- The page's AI text renderer supports one level of nested bullets.
+
+**Why:** The levels were already decided by code so results are consistent
+and checkable, but the advice wasn't: the AI drew on general good practice,
+which could vary between runs, drift into legal conclusions, or suggest
+less than a level needs. Putting next steps in `rules.yaml` keeps advice as
+consistent as the levels, lets it be reviewed and changed in one place, and
+gives the facts-only report the same advice. The Mozaic lines tie each
+level to the service that fits it without the AI making claims about
+Mozaic.

@@ -150,7 +150,7 @@ def test_abstraction_with_irz_trigger_is_a3_without_escalation():
     result = score_site(facts(irz_zones=[zone(irz_discharges=2)]), intake(dewatering="yes"))
     assert result["level"] == "A3"
     assert result["may_escalate_to"] is None
-    assert "groundwater specialist" in result["reasons"][0]["detail"].lower()
+    assert "groundwater or hydrology specialist" in result["reasons"][0]["detail"].lower()
     # Without an IRZ trigger, abstraction or dewatering alone adds nothing.
     assert score_site(facts(), intake(dewatering="yes"))["level"] == "A1"
 
@@ -193,6 +193,33 @@ def test_rules_yaml_has_every_rule_from_decisions():
     rules = load_rules()
     assert [r["id"] for r in rules["rules"]] == list(range(1, 11))
     assert next(r for r in rules["rules"] if r["id"] == 3)["buffer_m"] == 15
+
+
+def test_every_level_and_rule_has_a_next_step():
+    rules = load_rules()
+    steps = rules["level_next_steps"]
+    assert list(steps) == rules["levels"]
+    for level in rules["levels"]:
+        assert steps[level]["next_step"].strip() and steps[level]["with_mozaic"].strip()
+    by_id = {r["id"]: r for r in rules["rules"]}
+    # Rule 9 only checks the intake, so it never gives a reason to act on.
+    assert all(r.get("next_step") for r in rules["rules"] if r["id"] != 9)
+    assert by_id[5]["next_step"] == by_id[5]["note"]  # reuses the groundwater note
+    assert by_id[4]["next_step"] == by_id[6]["next_step"]  # one risk-zone step
+    assert "Habitats Regulations Assessment" in by_id[1]["next_step"]
+    assert "SSSI assent" in by_id[2]["next_step"]
+    assert "15 m" in by_id[3]["next_step"]
+
+
+def test_rules_without_a_next_step_are_refused(tmp_path):
+    from app.scoring import RULES_PATH
+
+    text = RULES_PATH.read_text().replace(
+        "    next_step: Contact Natural England early about SSSI assent.\n", "")
+    broken = tmp_path / "rules.yaml"
+    broken.write_text(text)
+    with pytest.raises(ValueError, match="no next step for: rule 2"):
+        load_rules(broken)
 
 
 # ------------------------------------------------- check_site (real data)
